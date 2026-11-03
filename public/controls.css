@@ -1,0 +1,72 @@
+.pane-filters { display: flex; gap: 8px; margin: 4px 0 10px; }
+.pane-filters input { min-width: 0; width: 45%; flex: 1; padding: 9px; font-size: 13px; }
+.pane-filters select { min-width: 0; padding: 9px 5px; font-size: 12px; }
+#textLayout { font-size: 11px; padding: 8px 5px; max-width: 110px; flex-shrink: 0; }
+.pane-age { color: #a6b49c; margin-top: 6px; }
+.reader-font-controls { display: flex; align-items: center; gap: 8px; padding: 4px 10px; flex: none; border-bottom: 1px solid #293a2e; font-size: 11px; color: #a7b7ab; }
+.reader-font-controls button { min-width: 40px; min-height: 40px; padding: 5px 8px; }
+#fontSizeLabel { min-width: 32px; text-align: center; }
+#paneOutput { font-size: var(--reader-font-size, 13px); }
+#conversationOutput { padding: 12px; font-size: var(--reader-font-size, 13px); line-height: 1.7; overflow-wrap: anywhere; }
+#conversationOutput pre { font: inherit; white-space: pre-wrap; margin: 6px 0; }
+#conversationOutput article, #conversationOutput details { border: 1px solid #34443b; border-radius: 10px; padding: 10px; margin: 10px 0; }
+#conversationOutput article[data-kind="user"] { background: #263c2b; }
+#conversationOutput summary { cursor: pointer; color: #a7b7ab; }
+.conversation-notice { font-size: 12px; color: #d8c99e; }
+body:not(.terminal-mode) #prompt { font-size: max(16px, var(--reader-font-size, 13px)); }
+/* Keep the composer below the reader instead of covering its last lines. */
+body:not(.terminal-mode) #controls { position: static; }
+body:not(.reader-expanded) #outputScroll { overscroll-behavior-y: auto; }
+#readerExpand { display: block; margin-left: auto; grid-column: 2; grid-row: 2; }
+body.reader-expanded { overflow: hidden; }
+body.reader-expanded > header { display: none; }
+body.reader-expanded #workspace {
+  position: fixed; top: var(--reader-top, 0px); left: 0; right: 0;
+  height: var(--reader-height, 100dvh); z-index: 30; background: #101513;
+  display: flex; flex-direction: column; overflow: hidden;
+  padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left));
+}
+body.reader-expanded #devicePanel,
+body.reader-expanded #modeBar,
+body.reader-expanded #upgrade,
+body.reader-expanded #empty,
+body.reader-expanded .pane-toolbar,
+body.reader-expanded #paneList { display: none; }
+body.reader-expanded #mobileView { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 4px; }
+body.reader-expanded #readerExpand { flex: none; }
+body.reader-expanded .output-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+body.reader-expanded .output-heading,
+body.reader-expanded .output-footer { flex: none; }
+body.reader-expanded #outputScroll { height: auto; min-height: 0; flex: 1; }
+body.reader-expanded #controls { position: static; flex: none; margin: 0; padding-top: 8px; }
+body.reader-expanded #prompt { max-height: min(140px, 24dvh); }
+.no-matches { font-size: 12px; }
+dialog { width: min(440px, calc(100% - 28px)); border: 1px solid #58745c; border-radius: 16px; background: #18231c; color: #e4ede7; padding: 24px; }
+dialog::backdrop { background: #0009; backdrop-filter: blur(3px); }
+dialog h2 { margin-top: 0; font-size: 21px; }
+dialog p { font-size: 13px; }
+dialog input { display: block; width: 100%; margin-top: 8px; padding: 12px; font-size: 16px; }
+.dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+#createError { color: #e4bd91; overflow-wrap: anywhere; }
+@media (min-width: 800px) {
+  .pane-toolbar { grid-column: 1; grid-row: 1; align-self: start; z-index: 1; background: #101513; }
+  #paneList { padding-top: 100px; }
+  .pane-filters { flex-wrap: wrap; }
+  .pane-filters input { width: 100%; flex-basis: 100%; }
+  .pane-filters select { width: 100%; }
+  #paneList { padding-top: 142px; }
+}
+#agentCommand { display: block; width: 100%; margin: 8px 0 16px; padding: 12px; }
+#modelDialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
+#modelOptions { display: grid; gap: 6px; }
+#modelOptions button { text-align: left; white-space: normal; overflow-wrap: anywhere; font-size: 13px; }
+#modelOptions button[aria-pressed="true"] { border-color: #b8de9e; background: #2c4431; }
+#modelScreen { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.model-navigation { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+#modelStatus { font-size: 13px; }
+.workspace-filter { display: grid; gap: 5px; margin: 8px 0; }
+.workspace-filter select { min-width: 0; width: 100%; padding: 8px; font-size: 12px; }
+#createWorkspace, #createSourcePane { display: block; width: 100%; min-width: 0; margin: 8px 0 14px; padding: 10px; font-size: 13px; }
+#controls .danger, .dialog-actions .danger { color: #ffc0b5; border-color: #9b5448; background: #38231f; }
+.pane-checkout { color: #b8c6bc; }
+@media (min-width: 800px) { #paneList { padding-top: 215px; } }

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Herdr Remote</title><link rel="stylesheet" href="/vendor/xterm.css"><link rel="stylesheet" href="/style.css"></head>
+<body>
+  <header><div><strong>herdr<span> / remote</span></strong><small id="status">連線到你的工作現場</small></div><button id="logout" hidden>登出</button></header>
+  <p id="transport" class="warning">HTTP 測試連線尚未加密。登入憑證、終端內容與輸入會經由此連線傳送；正式使用請設定 HTTPS。</p>
+  <main>
+    <section id="login"><p class="eyebrow">YOUR TERMINAL, ANYWHERE</p><h1>接回你的 herdr。</h1><p>同一個 workspace、同一批 agent，從這裡繼續。</p><form id="loginForm"><label for="password">網頁存取密碼</label><input id="password" type="password" autocomplete="current-password" required><button type="submit">登入</button></form><p id="loginError" role="alert"></p></section>
+    <section id="workspace" hidden>
+      <div class="connection"><select id="clients" aria-label="選擇 VDI"></select><button id="connect">連線</button><button id="disconnect" disabled>中斷連線</button><span id="connectionStatus" role="status">等待 VDI client</span></div>
+      <div id="empty"><h2>等待 VDI 連線</h2><p>在執行 herdr 的環境啟動 client，這裡就會出現裝置。</p><p>Client 程式：<a href="/client.py" download>下載 client.py</a>。安裝與啟動方式請見 iMac 專案內的 README。</p></div>
+      <div id="terminal" hidden></div>
+      <div id="controls" hidden>
+        <div class="keys"><button data-key="prefix">Ctrl+B</button><button data-key="escape">Esc</button><button data-key="tab">Tab</button><button data-key="interrupt">Ctrl+C</button><button data-key="up">↑</button><button data-key="down">↓</button><button data-key="left">←</button><button data-key="right">→</button><button id="keyboard">鍵盤</button></div>
+        <form id="promptForm"><textarea id="prompt" rows="2" placeholder="在手機輸入 prompt，再傳送到目前 pane" aria-label="Prompt"></textarea><button type="submit">傳送 ↵</button></form>
+      </div>
+    </section>
+  </main>
+  <script src="/vendor/xterm.js"></script><script src="/vendor/fit.js"></script><script src="/app.js"></script>
+</body>
+</html>

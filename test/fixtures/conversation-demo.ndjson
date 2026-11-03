@@ -1,0 +1,7 @@
+{"type":"session_meta","payload":{"id":"imac-synthetic-demo","cwd":"test-only"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"這是合成測試資料。請示範對話閱讀器的分類。"}]}}
+{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"這是人工撰寫的摘要範例，不是真實模型的思考紀錄。預設折疊，可點開查看。"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"正在示範過程訊息的折疊顯示。"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"demo_tool","arguments":"這只是歷史紀錄，不會執行任何工具。"}}
+{"type":"response_item","payload":{"type":"function_call_output","output":"合成工具結果：成功。"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"對話模式 可以顯示回覆、折疊思考摘要與工具紀錄。\n\n你現在看到的是 iMac 的合成範例，不是實際 agent 對話。\n\n切回「保留分行」可操作本機測試 shell；點閱讀器可滿版，A−／A＋可調整字體。"}]}}
