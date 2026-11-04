@@ -94,6 +94,20 @@ class BindingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.bridge.devin_binding('p1', {}, self.root / 'proc')
 
+    def test_devin_default_and_named_session_socket_paths(self):
+        for session in ['default', 'named']:
+            with self.subTest(session=session):
+                self.bridge.args.session = session
+                config = self.root / session
+                socket_root = config / 'herdr'
+                if session != 'default':
+                    socket_root = socket_root / 'sessions' / session
+                self.process(20 if session == 'default' else 21, session,
+                             socket=str(socket_root / 'herdr.sock'))
+                with patch.dict(os.environ, {'XDG_CONFIG_HOME': str(config)}, clear=True):
+                    binding = self.bridge.devin_binding('p1', {}, self.root / 'proc')
+                    self.assertEqual(binding['sessionId'], session)
+
     def test_remote_does_not_read_local_mapping_or_processes(self):
         self.bridge.args.remote = 'other-host'
         with patch.object(self.bridge, 'json_cli') as cli:

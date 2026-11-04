@@ -450,7 +450,10 @@ class Bridge:
         """Linux: join the same user's pane environment to open session locks."""
         session = self.args.session or 'default'
         config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
-        expected_socket = os.environ.get('HERDR_SOCKET_PATH') or str(config / 'herdr' / 'sessions' / session / 'herdr.sock')
+        session_root = config / 'herdr'
+        if session != 'default':
+            session_root = session_root / 'sessions' / session
+        expected_socket = os.environ.get('HERDR_SOCKET_PATH') or str(session_root / 'herdr.sock')
         candidates = set()
         for process in proc_root.iterdir():
             if not process.name.isdigit():
