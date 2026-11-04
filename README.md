@@ -73,7 +73,7 @@ python3 client.py --server http://127.0.0.1:3000 --id local --label '本機'
 [本機測試 launcher](LOCAL-TEST.md)。
 
 **首次使用若看到「尚未設定對話來源」**：先選「保留分行」操作；
-結構化對話需要另行設定 [transcript map](CONVERSATION.md)。
+結構化對話會自動依 agent session 對應來源；無法辨識時可設定即時重讀的 [transcript map](CONVERSATION.md)。
 
 ## 從另一台主機／手機連線
 

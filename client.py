@@ -6,6 +6,7 @@ import getpass
 import hashlib
 import json
 import os
+from pathlib import Path
 import queue
 import re
 import select
@@ -393,11 +394,92 @@ class Bridge:
         self.activity_cursor = 0
         self.workspace_cache = {}
         self.transcripts = {}
+        self.discovered_paths = {}
         if getattr(args, 'transcript_map', None):
             with open(args.transcript_map, encoding='utf-8') as source:
                 self.transcripts = json.load(source)
             if not isinstance(self.transcripts, dict):
                 raise ValueError('transcript-map 必須是 pane ID 對應設定的 JSON object')
+
+    def transcript_binding(self, pane):
+        """Resolve identity on every read; never select a transcript by recency/cwd."""
+        if self.args.machine or self.args.remote:
+            raise ValueError('對話模式請在 agent 所在主機執行 bridge')
+        mapping = self.transcripts
+        path = getattr(self.args, 'transcript_map', None)
+        if path:
+            # Atomic replacements by an operator become visible without a restart.
+            with open(path, encoding='utf-8') as source:
+                updated = json.load(source)
+            if not isinstance(updated, dict):
+                raise ValueError('transcript-map 必須是 JSON object')
+            mapping = updated
+        info = self.json_cli('pane', 'get', pane)
+        info = info.get('pane', info)
+        agent = info.get('agent')
+        manual = mapping.get(pane)
+        if agent == 'devin' and Path('/proc').is_dir():
+            return self.devin_binding(pane, info)
+        marker = info.get('agent_session') or {}
+        if (agent in ('codex', 'claude') and marker.get('agent') == agent
+                and marker.get('kind') == 'id' and marker.get('source') == 'herdr:' + agent):
+            session = marker.get('value')
+            if not isinstance(session, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}', session):
+                raise ValueError('Agent 回報的 session ID 格式不支援')
+            if isinstance(manual, dict) and manual.get('agent') == agent and manual.get('sessionId') == session:
+                return {**manual, 'bindingSource': 'agent-session'}
+            key = (agent, session)
+            found = self.discovered_paths.get(key)
+            if not found or not Path(found).is_file():
+                root = (Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'sessions'
+                        if agent == 'codex' else Path.home() / '.claude' / 'projects')
+                pattern = '*-' + session + '.jsonl' if agent == 'codex' else session + '.jsonl'
+                matches = list(root.rglob(pattern))
+                if len(matches) != 1:
+                    raise ValueError('已辨識目前 session，但找不到唯一的對話檔案；不會使用舊映射')
+                found = str(matches[0])
+                if len(self.discovered_paths) >= 100:
+                    self.discovered_paths.clear()
+                self.discovered_paths[key] = found
+            return {'agent': agent, 'sessionId': session, 'path': found, 'bindingSource': 'agent-session'}
+        if isinstance(manual, dict) and (not agent or manual.get('agent') == agent):
+            return {**manual, 'bindingSource': 'manual'}
+        raise ValueError('尚無法辨識此 pane 的 session；請啟用 herdr agent session 整合，或設定 --transcript-map（修改後即時生效）')
+
+    def devin_binding(self, pane, info, proc_root=Path('/proc')):
+        """Linux: join the same user's pane environment to open session locks."""
+        session = self.args.session or 'default'
+        config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
+        expected_socket = os.environ.get('HERDR_SOCKET_PATH') or str(config / 'herdr' / 'sessions' / session / 'herdr.sock')
+        candidates = set()
+        for process in proc_root.iterdir():
+            if not process.name.isdigit():
+                continue
+            try:
+                if process.stat().st_uid != os.getuid():
+                    continue
+                env = dict(part.split(b'=', 1) for part in (process / 'environ').read_bytes().split(b'\0') if b'=' in part)
+                if (env.get(b'HERDR_PANE_ID') != pane.encode()
+                        or env.get(b'HERDR_SOCKET_PATH') != expected_socket.encode()):
+                    continue
+                # Require both the database and lock to be open in the same process.
+                paths = set()
+                for fd in (process / 'fd').iterdir():
+                    try:
+                        paths.add(Path(os.readlink(fd)))
+                    except OSError:
+                        continue
+                for lock in paths:
+                    database = lock.parent.parent / 'sessions.db'
+                    if lock.parent.name == 'session_locks' and lock.suffix == '.lock' and database in paths:
+                        candidates.add((str(database), lock.stem))
+            except (OSError, ValueError):
+                continue  # Process exited or is not readable by this bridge user.
+        if len(candidates) != 1:
+            raise ValueError('無法唯一確認 Devin 的 live session lock；稍後重試，不會顯示舊 session')
+        database, session_id = candidates.pop()
+        return {'agent': 'devin', 'sessionId': session_id, 'path': database,
+                'cwd': info.get('cwd', ''), 'bindingSource': 'live-process'}
 
     def sample_activity(self, pane):
         try:
@@ -542,11 +624,10 @@ class Bridge:
                 if params.get('view') == 'conversation':
                     if self.args.machine or self.args.remote:
                         raise ValueError('對話模式請在 agent 所在主機執行 bridge，不讀取 SSH client 本機的紀錄')
-                    binding = self.transcripts.get(pane)
-                    if not isinstance(binding, dict):
-                        raise ValueError('此 pane 尚未設定對話來源；請在 VDI client 指定 --transcript-map')
-                    self.json_cli('pane', 'get', pane)  # Require an existing pane.
-                    result = {'paneId': pane, 'conversation': read_conversation(binding)}
+                    binding = self.transcript_binding(pane)
+                    conversation = read_conversation(binding)
+                    conversation['bindingSource'] = binding['bindingSource']
+                    result = {'paneId': pane, 'conversation': conversation}
                 elif params.get('view') == 'menu':
                     text = self.cli('pane', 'read', pane, '--source', 'visible', '--lines', '160')
                     result = {'paneId': pane, 'view': 'menu', 'text': text[-24000:]}
@@ -583,7 +664,10 @@ class Bridge:
                 local = not (self.args.machine or self.args.remote)
                 def usage(item):
                     pane, agent = item
-                    binding = self.transcripts.get(pane) if local else None
+                    try:
+                        binding = self.transcript_binding(pane) if local else None
+                    except (ValueError, OSError, subprocess.TimeoutExpired):
+                        binding = None
                     if isinstance(binding, dict) and binding.get('agent') == agent:
                         try:
                             found = context_from_transcript(binding)

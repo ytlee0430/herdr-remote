@@ -69,7 +69,7 @@ class ContextUsageTests(unittest.TestCase):
         bridge.transcripts = {'p1': {'agent': 'codex', 'path': path, 'sessionId': 's'}}
         bridge.tracked_agents = {'p1': 'codex', 'p2': 'claude', 'p3': 'devin'}
         screens = {'p2': 'Context left until auto-compact: 40%', 'p3': 'no data'}
-        with patch.object(bridge, 'cli', side_effect=lambda *a: screens[a[2]]), patch.object(bridge, 'output') as output:
+        with patch.object(bridge, 'json_cli', side_effect=lambda *a: {'agent': bridge.tracked_agents[a[2]]}), patch.object(bridge, 'cli', side_effect=lambda *a: screens[a[2]]), patch.object(bridge, 'output') as output:
             bridge.mobile({'operation': 'context', 'params': {}, 'requestId': 'c'})
         usage = output.call_args.kwargs['result']['usage']
         self.assertEqual(usage['p1']['source'], 'transcript')

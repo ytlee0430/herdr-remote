@@ -21,7 +21,7 @@ test('Reader expands output and composer without reconnecting or losing drafts',
   browser = await chromium.launch({ channel: 'chrome', headless: true });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  let connections = 0, socket;
+  let connections = 0, socket, sessionId = 'synthetic-test', bindingSource = 'manual';
   const commands = [];
   await page.route('**/api/**', route => route.fulfill({ json: { clients: [{ id: 'reader', label: 'Reader test', mobile: true, mobileVersion: 2, online: true, terminal: true }] } }));
   await page.routeWebSocket('**/terminal?*', ws => {
@@ -30,7 +30,7 @@ test('Reader expands output and composer without reconnecting or losing drafts',
       const m = JSON.parse(raw); if (m.type !== 'mobile') return;
       commands.push(m);
       const result = m.operation === 'panes' ? { panes: [{ id: 'p1', title: 'Example agent', status: 'idle' }] } : m.params?.view === 'conversation' ? { conversation: {
-        agent: 'codex', sessionId: 'synthetic-test', readOnly: true, entries: [
+        agent: 'codex', sessionId, bindingSource, readOnly: true, entries: [
           { id: '1', kind: 'user', text: '問題' }, { id: '2', kind: 'thinking', text: '思考摘要測試' },
           { id: '3', kind: 'tool', text: '<img src=x onerror=alert(1)>工具歷史' }, { id: '4', kind: 'assistant', text: '回答內容\n'.repeat(100) + '最後回答測試' },
         ],
@@ -103,6 +103,11 @@ test('Reader expands output and composer without reconnecting or losing drafts',
   await page.locator('#prompt').fill('Keep this unsent draft');
   await page.locator('#conversationOutput details summary').first().click();
   assert.equal(await page.locator('#conversationOutput details[open]').count(), 1);
+  assert.match(await page.locator('.conversation-notice').textContent(), /人工映射/);
+  sessionId = 'next-session'; bindingSource = 'agent-session';
+  await page.waitForFunction(() => document.querySelector('.conversation-notice').textContent.includes('next-session'));
+  assert.match(await page.locator('.conversation-notice').textContent(), /已自動對應 session/);
+  assert.equal(await page.locator('#prompt').inputValue(), 'Keep this unsent draft');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: '/tmp/herdr-conversation.png', fullPage: true });
   await page.locator('#textLayout').selectOption('lines');

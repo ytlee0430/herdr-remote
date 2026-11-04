@@ -17,8 +17,26 @@
 ## Agent 主機設定
 
 只支援直接在 agent 主機 本機跑的 bridge。`--remote` / `--machine` 不會讀取本機
-其他 session 的檔案。先選一個已有 Claude 或 Codex 的 pane，確定它的
-session ID 與實際 JSONL 檔案。不要用最近修改時間猜 session。
+其他 session 的檔案。
+
+### 自動對應（預設啟用）
+
+- Codex／Claude：每次讀取查詢 herdr 的 `agent_session`，依整合回報的確切 ID
+  尋找本機 JSONL。Codex 使用 `$CODEX_HOME/sessions`（預設 `~/.codex/sessions`），
+  Claude 使用 `~/.claude/projects`。已有相同 ID 的人工映射可指定自訂路徑。
+- Devin（Linux）：由同一使用者程序的 `HERDR_PANE_ID`、`HERDR_SOCKET_PATH`
+  與同一程序開啟的 `sessions.db`、`session_locks/*.lock` 確認來源。
+  每次重新辨識，包含新 session 與 `/clear`；不需要先寫映射。
+- 找不到唯一來源時顯示錯誤；不依 cwd、修改時間或 pane 標題猜測。
+  已知 session 改變但新檔案尚未建立時，也不會顯示上一個 session。
+- Codex／Claude 的自動跟隨依賴 herdr session 整合確實回報 ID。
+  未回報時仍可使用人工映射，閱讀器會明示其限制；不保證這份映射是 live session。
+- 對話與 Context 查詢共用同一來源解析流程。更新 bridge 不必重啟 agent。
+
+### 人工映射與即時重讀
+
+未提供 session ID 的整合、自訂紀錄位置或非 Linux Devin 可使用人工映射。
+先確定 pane 的 session ID 與實際檔案，不要用最近修改時間猜 session。
 
 用編輯器在 agent 主機 建立 `transcript-map.json`，替換下面三個 placeholder：
 
@@ -33,10 +51,14 @@ session ID 與實際 JSONL 檔案。不要用最近修改時間猜 session。
 ```
 
 Claude 的 `agent` 填 `claude`。可選 `contextWindow`（tokens）指定 context 上限，
-供 Context 用量顯示使用；未指定時 Claude 依紀錄中的模型判斷（新模型 1M，Haiku 4.5 與更舊為 200k），Codex 讀 log 內的值。每個 pane 都需明確映射。設定檔只能由 VDI
+供 Context 用量顯示使用；未指定時 Claude 依紀錄中的模型判斷（新模型 1M，Haiku 4.5 與更舊為 200k），Codex 讀 log 內的值。無法自動辨識的 pane 才需要人工映射。設定檔只能由 VDI
 端提供，瀏覽器不能傳入檔案路徑。不要把真實對話或映射提交 Git。
 
-只停止 Python bridge，不停止 herdr 或 agent，然後更新並重開：
+首次加入 `--transcript-map` 或更新 client 時，只重啟 Python bridge，不停止 herdr 或 agent。
+之後每次讀取都會重讀映射檔；建議以暫存檔加原子 rename 更新，無須重啟 bridge。
+無效 JSON 會顯示錯誤，不沿用舊內容。
+
+更新並重開範例：
 
 ```sh
 curl -fS https://relay.example.com/client.py -o herdr-remote-client.py
@@ -48,7 +70,7 @@ env -u HERDR_SESSION -u HERDR_SOCKET_PATH \
 ```
 
 沿用原本 client token。新 client 上線後，網頁重新整理、選該 pane、將排版
-切為「對話」。舊 client / 未映射 pane 會顯示說明，不自動改讀其他來源。
+切為「對話」。舊 client / 無法辨識來源的 pane 會顯示說明。
 
 ## 安全邊界與限制
 
@@ -56,8 +78,9 @@ env -u HERDR_SESSION -u HERDR_SOCKET_PATH \
 - 從有限大小的 header 驗證 session ID，讀取最近 2 MiB；未完成 JSON 行等待下次。
 - 最多保留 100 個項目，回應項目約 60 KiB；過長文字截短。未知紀錄略過。
 - 不抓取圖片／網址、不執行 HTML、不顯示加密的推理內容；只顯示 log 本來提供的文字摘要。
-- 映射是人工指定的歷史來源，**不會驗證 live PID／pane 現在是否仍是同一 agent**。
-  pane 重用或 agent 換 session 時，需重新確認映射。對話模式可傳送、新視窗及控制按鍵，操作目標是目前選取的 live pane，並非歷史 session。
+- 人工映射是歷史來源，**不會驗證 live PID／pane 現在是否仍是同一 session**。
+  未取得整合回報時，pane 重用或 agent 換 session 仍需重新確認人工映射。
+  Codex／Claude 整合回報也依賴 herdr 與 hook 的正確性；Devin 在 Linux 另驗證程序與 lock。對話模式可傳送、新視窗及控制按鍵，操作目標是目前選取的 live pane，並非歷史 session。
   授權狀態仍需切回「保留分行」查看即時畫面。
 - 歷史工具紀錄不是可操作的授權要求。blocked 時網頁另外讀取即時畫面顯示提問面板，
   不使用對話紀錄判斷授權。
@@ -94,5 +117,6 @@ python3 -m unittest discover -s test -p '*_test.py'
 
 配置時以 Devin 程序的 `HERDR_PANE_ID` 與開啟的 `session_locks/*.lock`
 交叉確認 session，不能只靠 cwd、最新修改時間或可能過期的 herdr session 標記。
-此映射不會自動跟隨 `/clear` 或切換 session；切換後須重新確認映射。
+Linux bridge 優先使用上述 live lock 自動對應，無法唯一確認時停止顯示舊映射。
+其他平台使用人工映射時，切換後須更新映射檔（即時重讀）。
 對話隨資料庫提交更新，不保證逐字串流。既有 session 不必開啟 `--export` 或重啟。

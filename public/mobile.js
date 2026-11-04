@@ -289,7 +289,8 @@ function renderOutput() {
     const expanded = new Set([...host.querySelectorAll('details[open]')].map(el => el.dataset.id));
     host.replaceChildren();
     const note = document.createElement('p'); note.className = 'conversation-notice';
-    note.textContent = conversationError || (conversation ? `對話紀錄 · ${conversation.agent} · ${conversation.sessionId}。不代表目前 pane 的即時授權狀態。${conversation.truncated ? '僅顯示最近部分紀錄。' : ''}` : '正在讀取對話紀錄…'); host.append(note);
+    const bindingNote = conversation?.bindingSource === 'manual' ? '人工映射：尚未取得目前 session 身分，切換 session 後請更新映射。' : conversation?.bindingSource ? '已自動對應 session。' : '';
+    note.textContent = conversationError || (conversation ? `對話紀錄 · ${conversation.agent} · ${conversation.sessionId}。${bindingNote}不代表目前 pane 的即時授權狀態。${conversation.truncated ? '僅顯示最近部分紀錄。' : ''}` : '正在讀取對話紀錄…'); host.append(note);
     if (status === 'working' || status === 'blocked') {
       const state = document.createElement('p'); state.textContent = status === 'working' ? 'Working…' : 'Pane 等待回覆；請在下方「Agent 等待回覆」作答，或切回「保留分行」查看即時畫面。'; host.append(state);
     }

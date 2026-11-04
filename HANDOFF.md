@@ -22,7 +22,9 @@
 對話功能已移除 PoC 標示。Codex／Claude 使用明確映射的 JSONL，
 Devin 使用本機 SQLite 主對話鏈。映射由 bridge 主機設定，網站不能提供路徑。
 來源讀取是唯讀，但輸入操作目標是目前 live pane。
-映射不驗證 live PID，也不自動追蹤換 session；授權畫面須查看原始終端。
+Codex／Claude 依 herdr 回報的 session ID 自動對應；Linux Devin 依程序與 session lock 自動跟隨。
+人工映射每次讀取重載；缺少 session 回報時仍須手動更新，閱讀器會標示限制。
+授權畫面須查看原始終端。
 沒有來源時顯示設定說明，不猜測其他使用者或其他 session 的紀錄。
 CLI 原生選單與資料格式升級後可能需要調整 parser。
 
