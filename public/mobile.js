@@ -9,6 +9,7 @@ let conversation = null, conversationError = '', conversationSignature = '';
 let inputBuffer = '', inputSocket = null, inputTimer = null, lastDisconnect = '';
 let readerExpanded = false;
 let contextUsage = {}, contextBusy = false, contextRunning = false, contextAction = null;
+let approvalEnabled = false, waitingApproval = false, approvalBusy = false, deviceAuthBusy = false;
 // Preserve following the latest reply when the viewport, keyboard or composer
 // changes the reader's height, even if the transcript itself is unchanged.
 let followLatest = true;
@@ -71,7 +72,7 @@ function paneStorageKey() { const device = devices.find(d => d.id === $('clients
 if (location.protocol === 'https:') $('transport').hidden = true;
 async function api(path, data) {
   const res = await fetch(path, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-  const result = await res.json(); if (!res.ok) throw new Error(result.error || '連線失敗'); return result;
+  const result = await res.json(); if (!res.ok) { const error = new Error(result.error || '連線失敗'); error.status = res.status; throw error; } return result;
 }
 function clearInput() {
   clearTimeout(inputTimer); inputTimer = null; inputBuffer = ''; inputSocket = null;
@@ -144,6 +145,8 @@ async function refresh() {
   try {
     const data = await api('/api/clients');
     loggedIn = true; $('login').hidden = true; $('workspace').hidden = false; $('logout').hidden = false;
+    if (data.deviceApproval === true) configureApproval(true);
+    if (waitingApproval) showApproval(null);
     devices = data.clients;
     const selected = $('clients').value || saved('herdr-device');
     $('clients').replaceChildren(...devices.map(c => {
@@ -158,7 +161,7 @@ async function refresh() {
     if (old) $('upgrade').textContent = '請更新所選裝置的 client，以啟用 agent 正確送出、新視窗和輸出時間排序。';
     updateControls();
     if (autoRestore && !ws && devices.some(c => c.id === $('clients').value && c.online)) { autoRestore = false; connect(); }
-  } catch (error) { if (loggedIn) $('connectionStatus').textContent = error.message; }
+  } catch (error) { if (error.status === 401 && loggedIn) { loggedIn = false; ws?.close(); $('workspace').hidden = true; $('logout').hidden = true; $('manageDevices').hidden = true; $('login').hidden = false; $('deviceDialog').close(); $('loginError').textContent = error.message; } else if (loggedIn) $('connectionStatus').textContent = error.message; }
 }
 function workspaceLabel(w) { return `${w.label || w.id}${w.branch ? ' · ' + w.branch : ''}`; }
 function workspaceOptions(select, rows) {
@@ -342,8 +345,16 @@ async function switchMode(next) {
   if (ws) { const old = ws; await new Promise(resolve => { old.addEventListener('close', resolve, { once: true }); old.close(); }); }
   setMode(next); if (wasConnected) connect();
 }
-$('loginForm').onsubmit = async event => { event.preventDefault(); try { await api('/api/login', { password: $('password').value }); $('password').value = ''; $('loginError').textContent = ''; await refresh(); } catch (error) { $('loginError').textContent = error.message; } };
-$('logout').onclick = async () => { remember('herdr-connected', 'no'); ws?.close(); await api('/api/logout', {}); location.reload(); };
+$('loginForm').onsubmit = async event => {
+  event.preventDefault(); const button = $('loginForm').querySelector('button[type=submit]'); button.disabled = true;
+  try {
+    const result = await api('/api/login', { password: $('password').value, ...(approvalEnabled ? { deviceName: $('deviceName').value, bootstrapCode: $('bootstrapCode').value.trim() } : {}) });
+    $('password').value = ''; $('bootstrapCode').value = ''; $('loginError').textContent = '';
+    if (result.status === 'pending') showApproval(result); else { showApproval(null); await refresh(); }
+  } catch (error) { $('loginError').textContent = error.message; }
+  finally { button.disabled = false; }
+};
+$('logout').onclick = async () => { if (approvalEnabled && !confirm('登出並忘記這個瀏覽器？下次登入須重新核准或使用本機配對碼。')) return; remember('herdr-connected', 'no'); ws?.close(); await api('/api/logout', {}); location.reload(); };
 $('connect').onclick = connect; $('disconnect').onclick = () => { remember('herdr-connected', 'no'); ws?.close(); };
 $('mobileMode').onclick = () => switchMode('mobile'); $('terminalMode').onclick = () => switchMode('terminal');
 $('refreshPanes').onclick = refreshPanes;
@@ -630,4 +641,86 @@ $('contextForm').onsubmit = async event => {
   } catch (error) { report(`${error.message}。不會自動重試。`); }
   finally { contextRunning = false; $('cancelContext').disabled = false; updateControls(); }
 };
+function configureApproval(enabled) {
+  approvalEnabled = enabled;
+  $('deviceLoginFields').hidden = !enabled;
+  // A local bootstrap code supplies the name from the host; normal requests
+  // are validated by the server, including when JavaScript is bypassed.
+  $('manageDevices').hidden = !enabled || !loggedIn;
+  $('logout').textContent = enabled ? '登出並忘記此瀏覽器' : '登出';
+}
+function showApproval(request) {
+  waitingApproval = !!request;
+  $('approvalWaiting').hidden = !request;
+  $('loginForm').hidden = !!request;
+  $('approvalCode').textContent = request?.code || '';
+  $('approvalExpires').textContent = request ? `申請 ${request.name} · 有效至 ${new Date(request.expiresAt).toLocaleTimeString()}（5 分鐘內）` : '';
+}
+async function pollApproval(initial = false) {
+  if (!approvalEnabled || loggedIn || approvalBusy || (!initial && !waitingApproval)) return;
+  approvalBusy = true;
+  try {
+    const result = await api('/api/auth/request');
+    if (result.status === 'pending') showApproval(result);
+    else if (result.status === 'approved') { showApproval(null); await refresh(); }
+    else if (waitingApproval) { showApproval(null); $('loginError').textContent = result.status === 'denied' ? '申請已被拒絕，或核准裝置已撤銷。' : '申請已過期，請重新登入申請。'; }
+  } catch (error) { $('loginError').textContent = error.message; }
+  finally { approvalBusy = false; }
+}
+async function authAction(action) {
+  if (deviceAuthBusy) return;
+  deviceAuthBusy = true; $('deviceAuthError').textContent = '';
+  try { await action(); }
+  catch (error) { $('deviceAuthError').textContent = error.message; }
+  finally { deviceAuthBusy = false; await refreshAuthorizations(); }
+}
+async function refreshAuthorizations() {
+  if (!approvalEnabled || !loggedIn || deviceAuthBusy) return;
+  deviceAuthBusy = true;
+  try {
+    const data = await api('/api/auth/devices');
+    $('manageDevices').textContent = data.requests.length ? `裝置信任（${data.requests.length}）` : '裝置信任';
+    $('approvalNotice').hidden = !data.requests.length;
+    $('approvalNotice').textContent = `${data.requests.length} 個新瀏覽器等待核准，點此核對配對碼`;
+    const requests = $('deviceRequests'), browsers = $('trustedBrowsers');
+    requests.replaceChildren(); browsers.replaceChildren();
+    if (!data.requests.length) requests.textContent = '目前沒有申請。';
+    for (const request of data.requests) {
+      const card = document.createElement('article'), name = document.createElement('strong'), info = document.createElement('p'), code = document.createElement('code'), actions = document.createElement('div');
+      name.textContent = request.name; info.textContent = `${request.userAgent} · 申請於 ${new Date(request.createdAt).toLocaleString()}`; code.textContent = request.code; actions.className = 'device-actions';
+      for (const [approve, label] of [[true, '同意此瀏覽器'], [false, '拒絕']]) {
+        const button = document.createElement('button'); button.textContent = label;
+        button.onclick = () => authAction(async () => {
+          if (approve && !confirm(`確認新瀏覽器「${request.name}」顯示配對碼 ${request.code}？核准後可操作主機，並核准其他瀏覽器。`)) return;
+          await api('/api/auth/decide', { requestId: request.id, code: request.code, approve });
+        }); actions.append(button);
+      }
+      card.append(name, info, code, actions); requests.append(card);
+    }
+    for (const device of data.devices) {
+      const card = document.createElement('article'), name = document.createElement('strong'), info = document.createElement('p'), button = document.createElement('button');
+      const current = device.id === data.currentDeviceId;
+      name.textContent = device.name + (current ? '（目前瀏覽器）' : '');
+      info.textContent = `${device.userAgent} · 有效至 ${new Date(device.expiresAt).toLocaleDateString()}`;
+      button.textContent = '撤銷信任';
+      button.onclick = () => authAction(async () => {
+        if (!confirm(`撤銷「${device.name}」並中斷它的連線？${data.devices.length === 1 ? '這是最後一個裝置，之後須用本機配對碼恢復。' : ''}`)) return;
+        await api('/api/auth/revoke', { deviceId: device.id, confirmed: true });
+        if (current) location.reload();
+      });
+      card.append(name, info, button); browsers.append(card);
+    }
+  } catch (error) { $('deviceAuthError').textContent = error.message; }
+  finally { deviceAuthBusy = false; }
+}
+$('manageDevices').onclick = async () => { $('deviceDialog').showModal(); await refreshAuthorizations(); };
+$('approvalNotice').onclick = () => $('manageDevices').click();
+$('closeDeviceDialog').onclick = () => $('deviceDialog').close();
+$('cancelApproval').onclick = async () => {
+  try { await api('/api/auth/request', {}); showApproval(null); }
+  catch (error) { $('loginError').textContent = error.message; }
+};
+api('/api/auth/config').then(async config => { configureApproval(config.deviceApproval === true); if (approvalEnabled) { await pollApproval(true); await refreshAuthorizations(); } }).catch(error => { $('loginError').textContent = error.message; });
+setInterval(() => { if (!document.hidden) pollApproval(); }, 2000);
+setInterval(() => { if (!document.hidden) refreshAuthorizations(); }, 5000);
 setMode(mode); refresh(); setInterval(refresh, 5000); setInterval(refreshContext, 30000); setInterval(readPane, 1500); setInterval(refreshPanes, 5000);

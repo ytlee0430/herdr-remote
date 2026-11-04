@@ -74,3 +74,13 @@ dialog input { display: block; width: 100%; margin-top: 8px; padding: 12px; font
 .pane-context.high, .pane-context-line.high { color: #e9b48b; }
 .output-heading p.pane-context-line { color: #b9c9a0; }
 #contextStatus { color: #e4bd91; overflow-wrap: anywhere; }
+
+#deviceLoginFields { display: grid; gap: 8px; }
+#deviceLoginFields input { width: 100%; margin: 5px 0; }
+#deviceLoginFields p, #deviceDialog p { font-size: 12px; }
+#approvalWaiting { margin-top: 20px; padding: 16px; border: 1px solid #58745c; border-radius: 12px; }
+#approvalCode { font-size: 30px; letter-spacing: 6px; color: #c6e5b5; }
+#deviceDialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
+#deviceDialog article { border: 1px solid #34443b; border-radius: 10px; padding: 12px; margin: 10px 0; overflow-wrap: anywhere; }
+#deviceDialog code { display: block; font-size: 24px; letter-spacing: 3px; margin: 8px 0; }
+#deviceDialog .device-actions { display: flex; gap: 8px; }

@@ -28,3 +28,6 @@ transcript-map*.json
 .herdr-client-token
 *.token
 *.private.md
+
+# Trusted browser records and one-time local pairing grants
+.device-auth/

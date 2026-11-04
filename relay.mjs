@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
+import { DeviceAuth, REQUEST_SECONDS } from './device-auth.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const publicOrigin = process.env.PUBLIC_ORIGIN || '';
@@ -11,6 +12,9 @@ if (publicOrigin) {
   if (parsed.protocol !== 'https:' || parsed.origin !== publicOrigin) throw Error('PUBLIC_ORIGIN must be an exact HTTPS origin without a trailing slash');
 }
 const secureCookie = publicOrigin ? '; Secure' : '';
+const approvalEnabled = process.env.DEVICE_APPROVAL === '1';
+if (approvalEnabled && !publicOrigin) throw Error('Device approval requires HTTPS PUBLIC_ORIGIN');
+const deviceAuth = approvalEnabled ? new DeviceAuth(process.env.DEVICE_AUTH_DIR || root + '.device-auth') : null;
 
 const secretPath = process.env.CREDENTIALS_FILE || root + '.credentials.json';
 if (!existsSync(secretPath)) writeFileSync(secretPath, JSON.stringify({
@@ -23,10 +27,59 @@ const equal = (a, b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer
 const json = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
 const online = c => Date.now() - c.seen < 45000;
 const summary = () => [...clients.values()].map(c => ({ id: c.id, label: c.label, online: online(c), busy: !!c.viewer, mobile: c.mobile, mobileVersion: c.mobileVersion, target: c.target, terminal: c.terminal }));
-function session(req) {
-  const token = /(?:^|;\s*)herdr_session=([^;]+)/.exec(req.headers.cookie || '')?.[1];
-  const expiry = sessions.get(token);
-  return expiry > Date.now() ? token : null;
+function requestCookie(req, name) {
+  return new RegExp('(?:^|;\\s*)' + name + '=([^;]+)').exec(req.headers.cookie || '')?.[1];
+}
+function setCookie(res, name, value, maxAge) {
+  const previous = res.getHeader('Set-Cookie') || [];
+  res.setHeader('Set-Cookie', [...(Array.isArray(previous) ? previous : [previous]), `${name}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secureCookie}`]);
+}
+function validSession(token) {
+  const state = sessions.get(token);
+  if (!state || state.expires <= Date.now()) { sessions.delete(token); return false; }
+  if (deviceAuth) {
+    try { if (!state.deviceId || !deviceAuth.get(state.deviceId)) { sessions.delete(token); return false; } }
+    catch { return false; } // Fail closed if the authorization database is unavailable.
+  }
+  return true;
+}
+function issueSession(res, device) {
+  for (const token of sessions.keys()) if (!validSession(token)) sessions.delete(token);
+  if (device) {
+    // Concurrent tabs may renew together; keep a small overlap without letting
+    // one remembered browser exhaust the global login-session budget.
+    const previous = [...sessions].filter(([, state]) => state.deviceId === device.id);
+    while (previous.length >= 4) {
+      const [expired] = previous.shift(); sessions.delete(expired);
+      for (const ws of wss.clients) if (ws.sessionToken === expired) ws.close(1000, 'Session renewed');
+    }
+  }
+  if (sessions.size >= 256) throw Error('登入數量已達上限，請稍後再試');
+  const token = randomBytes(32).toString('base64url');
+  sessions.set(token, { expires: Date.now() + 12 * 3600000, deviceId: device?.id || null });
+  setCookie(res, 'herdr_session', token, 43200);
+  return token;
+}
+function session(req, res) {
+  const token = requestCookie(req, 'herdr_session');
+  if (validSession(token)) return token;
+  if (deviceAuth && res) {
+    const device = deviceAuth.fromToken(requestCookie(req, 'herdr_device'));
+    if (device) return issueSession(res, device);
+  }
+  return null;
+}
+function enrollBrowser(res, enrollment) {
+  setCookie(res, 'herdr_device', enrollment.token, Math.max(0, Math.floor((enrollment.device.expiresAt - Date.now()) / 1000)));
+  setCookie(res, 'herdr_pending', '', 0);
+  issueSession(res, enrollment.device);
+}
+function revokeDevice(id) {
+  deviceAuth.revoke(id);
+  for (const [token, state] of sessions) if (state.deviceId === id) {
+    sessions.delete(token);
+    for (const ws of wss.clients) if (ws.sessionToken === token) ws.close(1008, 'Browser authorization revoked');
+  }
 }
 function sameOrigin(req) { return publicOrigin ? req.headers.origin === publicOrigin : req.headers.origin === `http://${req.headers.host}` || req.headers.origin === `https://${req.headers.host}`; }
 function send(ws, data) {
@@ -75,6 +128,20 @@ const server = http.createServer(async (req, res) => {
       const [file, type] = files.get(url.pathname);
       res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); return res.end(readFileSync(root + file));
     }
+    if (req.method === 'GET' && url.pathname === '/api/auth/config') return json(res, 200, { deviceApproval: approvalEnabled, trustDays: 90 });
+    if (deviceAuth && url.pathname === '/api/auth/request') {
+      if (req.method === 'POST') {
+        if (!sameOrigin(req)) return json(res, 403, { error: 'Invalid origin' });
+        deviceAuth.cancel(requestCookie(req, 'herdr_pending')); setCookie(res, 'herdr_pending', '', 0);
+        return json(res, 200, { status: 'cancelled' });
+      }
+      if (req.method === 'GET') {
+        const state = deviceAuth.status(requestCookie(req, 'herdr_pending'));
+        if (state.status === 'approved') enrollBrowser(res, state.enrollment);
+        else if (state.status !== 'pending') setCookie(res, 'herdr_pending', '', 0);
+        return json(res, 200, { status: state.status, code: state.code, name: state.name, expiresAt: state.expiresAt });
+      }
+    }
     if (req.method === 'POST' && url.pathname === '/api/login') {
       if (!sameOrigin(req)) return json(res, 403, { error: 'Invalid origin' });
       const key = req.socket.remoteAddress;
@@ -84,8 +151,22 @@ const server = http.createServer(async (req, res) => {
       if (++attempt.count > 10) return json(res, 429, { error: 'Too many attempts; wait a minute' });
       const data = await body(req);
       if (!equal(data.password, secrets.browserPassword)) return json(res, 401, { error: '密碼不正確' });
-      const token = randomBytes(32).toString('base64url'); sessions.set(token, Date.now() + 12 * 3600000);
-      res.setHeader('Set-Cookie', `herdr_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secureCookie}`);
+      if (deviceAuth) {
+        let enrollment;
+        if (data.bootstrapCode) enrollment = deviceAuth.bootstrap(data.bootstrapCode, req.headers['user-agent']);
+        else {
+          const trusted = deviceAuth.fromToken(requestCookie(req, 'herdr_device'));
+          if (trusted) {
+            const old = session(req); if (old) sessions.delete(old);
+            issueSession(res, trusted); return json(res, 200, { ok: true });
+          }
+        }
+        if (enrollment) { enrollBrowser(res, enrollment); return json(res, 200, { ok: true }); }
+        const pending = deviceAuth.request(requestCookie(req, 'herdr_pending'), data.deviceName, req.headers['user-agent']);
+        setCookie(res, 'herdr_pending', pending.token, REQUEST_SECONDS);
+        return json(res, 202, { status: 'pending', code: pending.request.code, name: pending.request.name, expiresAt: pending.request.expiresAt });
+      }
+      issueSession(res);
       return json(res, 200, { ok: true });
     }
     if (url.pathname.startsWith('/api/client/')) {
@@ -136,14 +217,30 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 404, { error: 'Not found' });
     }
-    const token = session(req);
+    const token = session(req, res);
     if (!token) return json(res, 401, { error: '請先登入' });
-    if (req.method === 'GET' && url.pathname === '/api/clients') return json(res, 200, { clients: summary() });
+    if (req.method === 'GET' && url.pathname === '/api/clients') return json(res, 200, { clients: summary(), deviceApproval: approvalEnabled });
+    if (deviceAuth && url.pathname === '/api/auth/devices' && req.method === 'GET') return json(res, 200, { devices: deviceAuth.list(), requests: deviceAuth.pending(), currentDeviceId: sessions.get(token).deviceId });
+    if (deviceAuth && req.method === 'POST' && ['/api/auth/decide', '/api/auth/revoke'].includes(url.pathname)) {
+      if (!sameOrigin(req)) return json(res, 403, { error: 'Invalid origin' });
+      const data = await body(req);
+      if (url.pathname === '/api/auth/decide') {
+        if (typeof data.approve !== 'boolean') return json(res, 400, { error: 'Invalid decision' });
+        deviceAuth.decide(data.requestId, data.code, data.approve, sessions.get(token).deviceId);
+      } else {
+        if (data.confirmed !== true) return json(res, 400, { error: '請確認要撤銷的瀏覽器' });
+        const self = sessions.get(token).deviceId === data.deviceId;
+        revokeDevice(data.deviceId);
+        if (self) { setCookie(res, 'herdr_device', '', 0); setCookie(res, 'herdr_session', '', 0); }
+      }
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'POST' && url.pathname === '/api/logout') {
       if (!sameOrigin(req)) return json(res, 403, { error: 'Invalid origin' });
+      if (deviceAuth) { revokeDevice(sessions.get(token).deviceId); setCookie(res, 'herdr_device', '', 0); setCookie(res, 'herdr_pending', '', 0); }
       sessions.delete(token);
       for (const ws of wss.clients) if (ws.sessionToken === token) ws.close(1000, 'Logged out');
-      res.setHeader('Set-Cookie', `herdr_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secureCookie}`);
+      setCookie(res, 'herdr_session', '', 0);
       return json(res, 200, { ok: true });
     }
     json(res, 404, { error: 'Not found' });
@@ -172,7 +269,7 @@ server.on('upgrade', (req, socket, head) => {
     ws.on('message', raw => {
       try {
         if (c.viewer !== ws) return;
-        if (!sessions.has(token) || sessions.get(token) <= Date.now()) return ws.close(1008, 'Login expired');
+        if (!validSession(token)) return ws.close(1008, 'Login expired');
         const msg = JSON.parse(raw);
         if (mobile && msg.type === 'mobile') {
           const params = msg.params || {};
@@ -198,11 +295,12 @@ server.on('upgrade', (req, socket, head) => {
 });
 const housekeeping = setInterval(() => {
   for (const ws of wss.clients) {
-    if (!ws.alive || !sessions.has(ws.sessionToken) || sessions.get(ws.sessionToken) <= Date.now()) ws.terminate();
+    if (!ws.alive || !validSession(ws.sessionToken)) ws.terminate();
     else { ws.alive = false; ws.ping(); }
   }
   for (const c of clients.values()) if (!online(c) && c.viewer) { send(c.viewer, { type: 'notice', message: 'VDI 已離線，請稍後重連' }); c.viewer.close(1012, 'VDI offline'); }
-  for (const [key, expiry] of sessions) if (expiry < Date.now()) sessions.delete(key);
+  for (const token of sessions.keys()) validSession(token);
+  deviceAuth?.prune();
   for (const [key, attempt] of attempts) if (attempt.until < Date.now()) attempts.delete(key);
 }, 20000);
 housekeeping.unref();

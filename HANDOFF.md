@@ -52,6 +52,15 @@ git diff --check
 未設定 TEST_HERDR_BINARY 時會略過真實 herdr 整合測試。
 完整流程與如何進入同一個本機測試 session 見 LOCAL-TEST.md。
 
+## 受信任瀏覽器（選用）
+
+`DEVICE_APPROVAL=1` 啟用新瀏覽器核准；要求 HTTPS PUBLIC_ORIGIN。
+`device-auth.mjs` 保存 90 天裝置信任雜湊、處理 5 分鐘申請；
+`scripts/device-admin.mjs bootstrap` 只在本機建立 10 分鐘一次性配對碼。
+首次配對不繼承舊 session，也不因本機 IP 自動授權。
+詳見 README：部署時須沿用憑證與固定私密 DEVICE_AUTH_DIR，不可將真實資料放進 Git。
+功能在獨立 worktree 開發，預設未啟用，不應直接套用到既有服務。
+
 ## 分享與歷史
 
 忽略規則只保護未追蹤檔案，不會清除歷史。
