@@ -5,6 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
+const publicOrigin = process.env.PUBLIC_ORIGIN || '';
+if (publicOrigin) {
+  const parsed = new URL(publicOrigin);
+  if (parsed.protocol !== 'https:' || parsed.origin !== publicOrigin) throw Error('PUBLIC_ORIGIN must be an exact HTTPS origin without a trailing slash');
+}
+const secureCookie = publicOrigin ? '; Secure' : '';
+
 const secretPath = process.env.CREDENTIALS_FILE || root + '.credentials.json';
 if (!existsSync(secretPath)) writeFileSync(secretPath, JSON.stringify({
   browserPassword: randomBytes(24).toString('base64url'),
@@ -21,7 +28,7 @@ function session(req) {
   const expiry = sessions.get(token);
   return expiry > Date.now() ? token : null;
 }
-function sameOrigin(req) { return req.headers.origin === `http://${req.headers.host}` || req.headers.origin === `https://${req.headers.host}`; }
+function sameOrigin(req) { return publicOrigin ? req.headers.origin === publicOrigin : req.headers.origin === `http://${req.headers.host}` || req.headers.origin === `https://${req.headers.host}`; }
 function send(ws, data) {
   if (ws?.readyState === WebSocket.OPEN) {
     if (ws.bufferedAmount > 1024 * 1024) return ws.close(1013, 'Slow connection; reconnect');
@@ -78,7 +85,7 @@ const server = http.createServer(async (req, res) => {
       const data = await body(req);
       if (!equal(data.password, secrets.browserPassword)) return json(res, 401, { error: '密碼不正確' });
       const token = randomBytes(32).toString('base64url'); sessions.set(token, Date.now() + 12 * 3600000);
-      res.setHeader('Set-Cookie', `herdr_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`);
+      res.setHeader('Set-Cookie', `herdr_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secureCookie}`);
       return json(res, 200, { ok: true });
     }
     if (url.pathname.startsWith('/api/client/')) {
@@ -136,7 +143,7 @@ const server = http.createServer(async (req, res) => {
       if (!sameOrigin(req)) return json(res, 403, { error: 'Invalid origin' });
       sessions.delete(token);
       for (const ws of wss.clients) if (ws.sessionToken === token) ws.close(1000, 'Logged out');
-      res.setHeader('Set-Cookie', 'herdr_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+      res.setHeader('Set-Cookie', `herdr_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secureCookie}`);
       return json(res, 200, { ok: true });
     }
     json(res, 404, { error: 'Not found' });

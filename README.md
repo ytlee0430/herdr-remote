@@ -79,6 +79,7 @@ Relay 的 `HOST`、`PORT`、`CREDENTIALS_FILE` 可透過環境變數指定。
 
 跨網路使用前，請在 relay 前方配置 HTTPS 反向代理，並支援 `/terminal`
 的 WebSocket 升級及保留 Host header。Relay 本身不建立 TLS 憑證。
+設定 `PUBLIC_ORIGIN=https://YOUR_ADDRESS`，讓登入 cookie 使用 Secure 並固定瀏覽器來源。
 將以下 `relay.example.com` 替換為自己的 HTTPS 網址：
 
 ```sh
@@ -91,6 +92,41 @@ python3 herdr-remote-client.py \
 client 只需主動連出，沒有 inbound VDI port 要開。
 HTTP(S) proxy 依 Python urllib 的環境變數處理。
 此服務使用共用密碼及共用 client token，請只提供給可信任的操作者。
+
+### 使用 Caddy 啟用 HTTPS（網域或公網 IP）
+
+提供 [Caddy 設定範本](deploy/Caddyfile.example)。需要新版 Caddy（已驗證 2.11.2）、
+由外部可連到此主機的 TCP 443，以及穩定的公網 IP 或已指向該 IP 的網域。
+設定範本使用 Let's Encrypt `shortlived` 憑證與 TLS-ALPN 驗證，不需開放 port 80。
+IP 憑證有效期約六天，必須保持 Caddy 運行，讓它自動續期。
+
+先將原本佔用 443 的 relay 移至回環介面，並設定網站的精確 HTTPS origin：
+
+```sh
+HOST=127.0.0.1 PORT=3000 PUBLIC_ORIGIN=https://YOUR_ADDRESS npm start
+```
+
+另一個終端啟動代理（將 YOUR_ADDRESS 替換成公網 IP 或網域，不含 scheme／port）：
+
+```sh
+HERDR_PUBLIC_ADDRESS=YOUR_ADDRESS caddy run --config deploy/Caddyfile.example --adapter caddyfile
+```
+
+Caddy 會自動簽發及更新憑證；IP 部署的 `default_sni` 讓不送 SNI 的瀏覽器
+也能在 NAT 後取得正確憑證。PUBLIC_ORIGIN 讓 relay 發出 Secure 登入 cookie，
+並只接受該 origin 的登入與 WebSocket，無須信任任意 forwarded headers。
+不要把後端 port 3000 對外轉送，也不要提供可直接繞過代理的 HTTP relay。
+
+將所有遠端 bridge 的 `--server` 改成 `https://YOUR_ADDRESS`，沿用原本
+client ID、session、token-file 與 transcript-map；只重啟 bridge，不重啟 agent。
+與 relay 同機的 bridge 可使用 `http://127.0.0.1:3000`，流量不離開主機。
+網站書籤也要改為 HTTPS，舊 HTTP 443 網址不會自動轉址；切換後需重新登入。
+不要用略過憑證驗證的選項，也不需要在手機手動安裝自簽根憑證。
+
+正式常駐時，請用 OS 服務管理器維持 relay、Caddy 與 bridge 運行，
+保留 Caddy 的私密資料目錄供續期；憑證私鑰、ACME 帳號及私人部署設定不要提交 Git。
+若公網 IP 改變，須更新網址、Caddy 設定與 bridge server，並重新簽發憑證。
+HTTPS 保護傳輸；目前仍使用原本的網站密碼，裝置核准登入機制尚未實作。
 
 ### 既有 SSH／saved machine
 

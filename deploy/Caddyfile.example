@@ -1,0 +1,18 @@
+# Set HERDR_PUBLIC_ADDRESS to your domain or public IP before starting Caddy.
+# Keep the relay private: HOST=127.0.0.1 PORT=3000
+# Set relay PUBLIC_ORIGIN=https://YOUR_ADDRESS for Secure cookies and Origin checks.
+{
+	default_sni {$HERDR_PUBLIC_ADDRESS}
+	auto_https disable_redirects
+}
+https://{$HERDR_PUBLIC_ADDRESS} {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived
+			disable_http_challenge
+		}
+	}
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:3000
+}

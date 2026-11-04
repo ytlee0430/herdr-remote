@@ -33,6 +33,8 @@ CLI 原生選單與資料格式升級後可能需要調整 parser。
 - 一個 client 同時間只接受一個網站控制端；relay 重啟會清除登入狀態。
 - 未設定 HOST／PORT 時仍使用相容預設 `0.0.0.0:443`（HTTP）。
   本機測試請使用 `HOST=127.0.0.1 PORT=3000`；跨網路需 HTTPS 代理。
+- HTTPS 部署使用 Caddy 範本；relay 設定 PUBLIC_ORIGIN 以啟用 Secure cookie 與固定瀏覽器來源。
+  後端必須只監聽回環介面；詳細部署與 IP 憑證續期見 README。
 - 不讀出或提交憑證、真實對話、映射及本機部署日誌。
 - 不任意停止、重啟或操作不屬於測試的既有 agent／pane。
 
