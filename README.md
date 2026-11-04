@@ -201,8 +201,9 @@ pane 卡片與標題下方：
 
 - 有對話映射時讀 JSONL 最後一筆用量。Codex 用 `token_count` 的
   `last_token_usage` 與 `model_context_window`；Claude 用最後一則 assistant
-  訊息的 `input + cache_creation + cache_read` tokens。Claude 視窗預設 200k，
-  超過即視為 1M；可在映射加 `"contextWindow": 1000000` 指定。
+  訊息的 `input + cache_creation + cache_read` tokens。Claude 上限依紀錄中的模型判斷：
+  Fable／Mythos、5.x 以後、Opus／Sonnet 4.6 以後為 1M；Haiku 4.5 與更舊模型為 200k
+  （用量超過 200k 仍視為 1M）。可在映射加 `"contextWindow": 1000000` 指定。
 - 無映射時只解析畫面上 agent 自己顯示的百分比（Codex `NN% context left`、
   Claude `Context left until auto-compact: NN%`），找不到就顯示「未知」，不猜測。
 - 映射不跟隨 `/clear`；清空後舊映射的用量會過時，需重新設定映射。

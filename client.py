@@ -299,6 +299,16 @@ def context_from_screen(text, agent):
             'basis': 'auto-compact' if agent == 'claude' else 'window'}
 
 
+def claude_context_window(model, used):
+    """Default Claude window by model family; explicit contextWindow overrides it."""
+    match = re.match(r'claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?!\d)', model) if isinstance(model, str) else None
+    large = isinstance(model, str) and '[1m]' in model
+    if match:
+        family, major, minor = match.group(1), int(match.group(2)), int(match.group(3) or 0)
+        large = large or family in ('fable', 'mythos') or major >= 5 or (major == 4 and minor >= 6 and family != 'haiku')
+    return 1000000 if large or used > 200000 else 200000
+
+
 def context_from_transcript(binding):
     """Latest token usage from an explicitly mapped JSONL; bounded tail read."""
     agent, path, session = binding.get('agent'), binding.get('path'), binding.get('sessionId')
@@ -335,7 +345,7 @@ def context_from_transcript(binding):
     number = lambda value: value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
     configured = binding.get('contextWindow')
     configured = configured if isinstance(configured, int) and not isinstance(configured, bool) and configured > 0 else None
-    used = window = None
+    used = window = model = None
     for record in records(tail):
         if agent == 'codex':
             payload = record.get('payload')
@@ -356,13 +366,13 @@ def context_from_transcript(binding):
                 continue
             total = sum(number(usage.get(key)) for key in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
             if total:
-                used = total
+                used, model = total, message.get('model')
     if used is None:
         return None
     if configured:
         window = configured
     elif agent == 'claude':
-        window = 200000 if used <= 200000 else 1000000
+        window = claude_context_window(model, used)
     return {'used': used, 'window': window, 'percent': round(min(100, used * 100 / window), 1) if window else None,
             'source': 'transcript', 'basis': 'window'}
 
