@@ -32,7 +32,7 @@ test('Reader expands output and composer without reconnecting or losing drafts',
       const result = m.operation === 'panes' ? { panes: [{ id: 'p1', title: 'Example agent', status: 'idle' }] } : m.params?.view === 'conversation' ? { conversation: {
         agent: 'codex', sessionId: 'synthetic-test', readOnly: true, entries: [
           { id: '1', kind: 'user', text: '問題' }, { id: '2', kind: 'thinking', text: '思考摘要測試' },
-          { id: '3', kind: 'tool', text: '<img src=x onerror=alert(1)>工具歷史' }, { id: '4', kind: 'assistant', text: '最後回答測試' },
+          { id: '3', kind: 'tool', text: '<img src=x onerror=alert(1)>工具歷史' }, { id: '4', kind: 'assistant', text: '回答內容\n'.repeat(100) + '最後回答測試' },
         ],
       } } : { text: 'Example output\n'.repeat(100) };
       ws.send(JSON.stringify({ type: 'mobile', requestId: m.requestId, result }));
@@ -41,6 +41,7 @@ test('Reader expands output and composer without reconnecting or losing drafts',
   await page.goto(base); await page.locator('#connect').click();
   await page.locator('.pane-card').waitFor();
   await page.locator('#conversationOutput article[data-kind="assistant"]').waitFor();
+  await page.waitForFunction(() => { const el = document.getElementById('outputScroll'); return el.scrollHeight - el.scrollTop - el.clientHeight < 2; });
   const normalOutput = await page.locator('#outputScroll').boundingBox();
   const normalControls = await page.locator('#controls').boundingBox();
   assert.ok(normalOutput.y + normalOutput.height <= normalControls.y, 'Composer must not cover the bottom of the normal reader');
@@ -65,16 +66,26 @@ test('Reader expands output and composer without reconnecting or losing drafts',
   assert.equal(await page.locator('#fontLarger').isVisible(), true);
   await page.locator('#fontSmaller').click();
   assert.equal(await outputFont(), '23px');
+  await page.locator('#latest').click();
   for (const size of [{ width: 390, height: 844 }, { width: 390, height: 440 }, { width: 1200, height: 900 }]) {
     await page.setViewportSize(size);
     await page.waitForFunction(() => Math.abs(document.getElementById('workspace').getBoundingClientRect().height - window.visualViewport.height) < 2);
     const output = await page.locator('#outputScroll').boundingBox(), controls = await page.locator('#controls').boundingBox();
+    await page.waitForFunction(() => { const el = document.getElementById('outputScroll'); return el.scrollHeight - el.scrollTop - el.clientHeight < 2; }, null, { timeout: 1500 });
     assert.ok(output.height > 40);
     assert.ok(output.y + output.height <= controls.y + 1);
     assert.ok(controls.y + controls.height <= size.height + 1);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   }
+  // Resizing must not pull someone reading older messages back to the end.
+  await page.locator('#outputScroll').evaluate(el => { el.scrollTop = 100; });
+  await page.waitForTimeout(100);
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await page.waitForTimeout(100);
+  assert.ok(await page.locator('#outputScroll').evaluate(el => el.scrollTop < 200));
+  await page.locator('#latest').click();
   await page.locator('#readerExpand').click();
+  await page.waitForFunction(() => { const el = document.getElementById('outputScroll'); return el.scrollHeight - el.scrollTop - el.clientHeight < 2; });
   assert.equal(await page.locator('#paneList').isVisible(), true);
   assert.equal(await page.locator('#prompt').inputValue(), 'Keep this unsent draft');
   await page.locator('#textLayout').selectOption('conversation');

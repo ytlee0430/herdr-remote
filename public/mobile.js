@@ -8,6 +8,16 @@ let rawOutput = '', creating = false, closing = false, workspaceRows = [], close
 let conversation = null, conversationError = '', conversationSignature = '';
 let inputBuffer = '', inputSocket = null, inputTimer = null, lastDisconnect = '';
 let readerExpanded = false;
+// Preserve following the latest reply when the viewport, keyboard or composer
+// changes the reader's height, even if the transcript itself is unchanged.
+let followLatest = true;
+const readerScroll = $('outputScroll');
+const nearLatest = () => readerScroll.scrollHeight - readerScroll.scrollTop - readerScroll.clientHeight < 80;
+readerScroll.addEventListener('scroll', () => { followLatest = nearLatest(); }, { passive: true });
+new ResizeObserver(() => {
+  if (followLatest && readerScroll.clientHeight) readerScroll.scrollTop = readerScroll.scrollHeight;
+}).observe(readerScroll);
+
 function fitReaderViewport() {
   if (!readerExpanded) return;
   const viewport = window.visualViewport;
@@ -201,7 +211,7 @@ function renderPanes() {
 function selectPane(id) {
   if (sending || closing || id === paneId) return;
   if (paneId) drafts.set(paneStorageKey() + ':' + paneId, $('prompt').value);
-  paneId = id; selectionEpoch++;
+  paneId = id; selectionEpoch++; followLatest = true;
   remember(paneStorageKey(), id);
   $('prompt').value = drafts.get(paneStorageKey() + ':' + id) || ''; $('sendStatus').textContent = '';
   const pane = panes.find(p => p.id === id);
@@ -337,7 +347,7 @@ $('outputScroll').onclick = () => {
 $('outputScroll').onkeydown = event => {
   if (event.key === 'Enter' && event.target === $('outputScroll')) { event.preventDefault(); expandReader(true); }
 };
-$('latest').onclick = () => $('outputScroll').scrollTop = $('outputScroll').scrollHeight;
+$('latest').onclick = () => { followLatest = true; readerScroll.scrollTop = readerScroll.scrollHeight; };
 $('textLayout').onchange = () => { remember('herdr-layout', $('textLayout').value); conversationSignature = ''; renderOutput(); updateControls(); readPane(); };
 $('paneSort').onchange = () => { remember('herdr-sort', $('paneSort').value); renderPanes(); };
 $('paneSearch').oninput = renderPanes;
