@@ -74,3 +74,15 @@ dialog input { display: block; width: 100%; margin-top: 8px; padding: 12px; font
 .pane-context.high, .pane-context-line.high { color: #e9b48b; }
 .output-heading p.pane-context-line { color: #b9c9a0; }
 #contextStatus { color: #e4bd91; overflow-wrap: anywhere; }
+.blocked-count { color: #1c3020; background: #e9b48b; border-radius: 10px; padding: 1px 7px; font-size: 10px; letter-spacing: 0; }
+.pane-card.needs-reply { border-color: #e9b48b; }
+.agent-prompt { border: 1px solid #e9b48b; border-radius: 12px; background: #2a2219; padding: 10px; margin-bottom: 8px; max-height: min(55dvh, 460px); overflow-y: auto; }
+.agent-prompt-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #f0c9a4; }
+#agentPromptStatus { color: #e4bd91; font-size: 11px; overflow-wrap: anywhere; }
+#agentQuestion { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 8px 0; color: #ecdcc8; }
+#agentOptions { display: grid; gap: 6px; }
+#agentOptions button { text-align: left; white-space: normal; font-size: 13px; }
+#agentOptions button[aria-pressed="true"] { background: #4a3a26; border-color: #e9b48b; }
+#agentOptions small { display: block; white-space: pre-wrap; }
+#agentScreen { white-space: pre; overflow-x: auto; font-size: 10px; max-height: 180px; }
+.agent-prompt-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }

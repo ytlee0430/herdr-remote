@@ -59,7 +59,8 @@ env -u HERDR_SESSION -u HERDR_SOCKET_PATH \
 - 映射是人工指定的歷史來源，**不會驗證 live PID／pane 現在是否仍是同一 agent**。
   pane 重用或 agent 換 session 時，需重新確認映射。對話模式可傳送、新視窗及控制按鍵，操作目標是目前選取的 live pane，並非歷史 session。
   授權狀態仍需切回「保留分行」查看即時畫面。
-- 歷史工具紀錄不是可操作的授權要求，blocked 時提醒查看原始 pane。
+- 歷史工具紀錄不是可操作的授權要求。blocked 時網頁另外讀取即時畫面顯示提問面板，
+  不使用對話紀錄判斷授權。
 - Claude 的一般 assistant 文字不一定有 final/commentary 標記；不靠文字猜測刪掉回覆。
 - Relay 本身提供 HTTP；跨網路部署請配置 HTTPS 反向代理，參考 README。
 
