@@ -281,6 +281,92 @@ def read_conversation(binding):
             'truncated': bool(clipped or start or len(kept) < len(entries)), 'entries': list(reversed(kept))}
 
 
+SLASH_COMMANDS = ('/model', '/clear', '/new')
+CONTEXT_SCREEN_PATTERNS = {
+    # Only percentages the agent itself renders; never estimate from text size.
+    'codex': re.compile(r'(\d{1,3})% context left'),
+    'claude': re.compile(r'Context left until auto-compact:\s*(\d{1,3})%'),
+}
+
+
+def context_from_screen(text, agent):
+    pattern = CONTEXT_SCREEN_PATTERNS.get(agent)
+    matches = pattern.findall(text) if pattern and isinstance(text, str) else []
+    if not matches:
+        return None
+    left = min(100, int(matches[-1]))
+    return {'used': None, 'window': None, 'percent': 100 - left, 'source': 'screen',
+            'basis': 'auto-compact' if agent == 'claude' else 'window'}
+
+
+def context_from_transcript(binding):
+    """Latest token usage from an explicitly mapped JSONL; bounded tail read."""
+    agent, path, session = binding.get('agent'), binding.get('path'), binding.get('sessionId')
+    if agent not in ('codex', 'claude') or not isinstance(path, str) or not os.path.isabs(path) or not isinstance(session, str) or not session:
+        return None
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0)
+    with os.fdopen(os.open(path, flags), 'rb') as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError('對話來源必須是一般檔案')
+        header = source.read(min(info.st_size, 1024 * 1024))
+        start = max(0, info.st_size - 1024 * 1024)
+        source.seek(start)
+        tail = source.read(info.st_size - start)
+        if start:
+            tail = tail.partition(b'\n')[2]
+    def records(data):
+        for line in data.splitlines(keepends=True):
+            if not line.endswith(b'\n') or len(line) > 1024 * 1024:
+                continue
+            try:
+                item = json.loads(line)
+            except (ValueError, UnicodeError):
+                continue
+            if isinstance(item, dict):
+                yield item
+    def record_session(record):
+        if agent == 'claude':
+            return record.get('sessionId')
+        if record.get('type') == 'session_meta' and isinstance(record.get('payload'), dict):
+            return record['payload'].get('id') or record['payload'].get('session_id')
+    if not any(record_session(r) == session for r in records(header)):
+        raise ValueError('對話 session ID 不符或無法驗證')
+    number = lambda value: value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+    configured = binding.get('contextWindow')
+    configured = configured if isinstance(configured, int) and not isinstance(configured, bool) and configured > 0 else None
+    used = window = None
+    for record in records(tail):
+        if agent == 'codex':
+            payload = record.get('payload')
+            if record.get('type') != 'event_msg' or not isinstance(payload, dict) or payload.get('type') != 'token_count':
+                continue
+            data = payload.get('info')
+            last = data.get('last_token_usage') if isinstance(data, dict) else None
+            if not isinstance(last, dict):
+                continue
+            used = number(last.get('total_tokens')) or number(last.get('input_tokens')) + number(last.get('output_tokens'))
+            window = number(data.get('model_context_window')) or None
+        else:
+            message = record.get('message')
+            if record.get('type') != 'assistant' or record.get('isSidechain') or record.get('sessionId') != session or not isinstance(message, dict):
+                continue
+            usage = message.get('usage')
+            if message.get('model') == '<synthetic>' or not isinstance(usage, dict):
+                continue
+            total = sum(number(usage.get(key)) for key in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
+            if total:
+                used = total
+    if used is None:
+        return None
+    if configured:
+        window = configured
+    elif agent == 'claude':
+        window = 200000 if used <= 200000 else 1000000
+    return {'used': used, 'window': window, 'percent': round(min(100, used * 100 / window), 1) if window else None,
+            'source': 'transcript', 'basis': 'window'}
+
+
 class Bridge:
     def __init__(self, args, token):
         self.args, self.token = args, token
@@ -293,6 +379,7 @@ class Bridge:
         self.activity = {}
         self.activity_lock = threading.Lock()
         self.tracked_panes = []
+        self.tracked_agents = {}
         self.activity_cursor = 0
         self.workspace_cache = {}
         self.transcripts = {}
@@ -439,6 +526,7 @@ class Bridge:
                 result['panes'] = [{key: value if isinstance(value, (int, float)) else str(value)[:160] for key, value in pane.items()}
                                    for pane in result['panes'][:100]]
                 self.tracked_panes = [pane['id'] for pane in result['panes']]
+                self.tracked_agents = {pane['id']: pane['agent'] for pane in result['panes'] if pane['agent'] in ('codex', 'claude', 'devin')}
             elif operation == 'read':
                 pane = params['paneId']
                 if params.get('view') == 'conversation':
@@ -461,13 +549,16 @@ class Bridge:
             elif operation == 'prompt':
                 info = self.json_cli('pane', 'get', params['paneId'])
                 pane = info.get('pane', info)
-                if params['text'].strip() == '/model' and pane.get('agent') in ('devin', 'codex', 'claude'):
+                command_text = params['text'].strip()
+                if command_text in ('/clear', '/new') and pane.get('agent_status') in ('working', 'blocked'):
+                    raise ValueError('Agent 正在工作或等待回覆，未送出清除命令。')
+                if command_text in SLASH_COMMANDS and pane.get('agent') in ('devin', 'codex', 'claude'):
                     screen = self.cli('pane', 'read', params['paneId'], '--source', 'visible', '--lines', '160')
                     ansi = None
                     if pane['agent'] == 'claude' and not model_prompt_ready(screen, 'claude'):
                         ansi = self.cli('pane', 'read', params['paneId'], '--source', 'visible', '--lines', '160', '--format', 'ansi')
                     if not model_prompt_ready(screen, pane['agent'], ansi):
-                        raise ValueError('終端輸入區可能有未送出的文字；請先在原始終端送出或清空，再開啟 Model。草稿未變更。')
+                        raise ValueError('終端輸入區可能有未送出的文字；請先在原始終端送出或清空，再執行 ' + command_text + '。草稿未變更。')
                 if pane.get('agent'):
                     # Agent-specific API separates paste and submit (300ms in
                     # herdr 0.9.5), unlike pane.run's combined input burst.
@@ -477,6 +568,26 @@ class Bridge:
                     # unlike agent prompt's JSON. Exit status confirms success.
                     self.cli('pane', 'run', params['paneId'], params['text'])
                 result = {'paneId': params['paneId'], 'submitted': True}
+            elif operation == 'context':
+                agents = dict(list(self.tracked_agents.items())[:24])
+                local = not (self.args.machine or self.args.remote)
+                def usage(item):
+                    pane, agent = item
+                    binding = self.transcripts.get(pane) if local else None
+                    if isinstance(binding, dict) and binding.get('agent') == agent:
+                        try:
+                            found = context_from_transcript(binding)
+                            if found:
+                                return pane, {**found, 'agent': agent}
+                        except (ValueError, OSError):
+                            pass
+                    try:
+                        found = context_from_screen(self.cli('pane', 'read', pane, '--source', 'visible', '--lines', '60'), agent)
+                    except (ValueError, OSError, subprocess.TimeoutExpired):
+                        found = None
+                    return pane, {**(found or {'used': None, 'window': None, 'percent': None, 'source': 'unknown', 'basis': 'window'}), 'agent': agent}
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    result = {'usage': dict(pool.map(usage, agents.items())), 'at': int(time.time() * 1000)}
             elif operation == 'create':
                 info = self.json_cli('pane', 'get', params['paneId'])
                 source = info.get('pane', info)
@@ -625,7 +736,7 @@ class Bridge:
     def run(self):
         target = ('machine: ' + self.args.machine) if self.args.machine else ('SSH: ' + self.args.remote + ' / ' + (self.args.session or 'default')) if self.args.remote else ('session: ' + (self.args.session or os.environ.get('HERDR_SESSION') or 'default'))
         self.generation = self.request('register', {'id': self.args.id, 'label': self.args.label, 'target': target,
-                                                   'capabilities': ['mobile-v1', 'mobile-v2', 'mobile-v3'], 'terminal': not bool(self.args.machine or self.args.remote)})['generation']
+                                                   'capabilities': ['mobile-v1', 'mobile-v2', 'mobile-v3', 'mobile-v4'], 'terminal': not bool(self.args.machine or self.args.remote)})['generation']
         print('Connected. Waiting for a browser to attach.', flush=True)
         worker = threading.Thread(target=self.poll, daemon=True)
         worker.start()

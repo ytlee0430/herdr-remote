@@ -8,6 +8,7 @@ let rawOutput = '', creating = false, closing = false, workspaceRows = [], close
 let conversation = null, conversationError = '', conversationSignature = '';
 let inputBuffer = '', inputSocket = null, inputTimer = null, lastDisconnect = '';
 let readerExpanded = false;
+let contextUsage = {}, contextBusy = false, contextRunning = false, contextAction = null;
 // Preserve following the latest reply when the viewport, keyboard or composer
 // changes the reader's height, even if the transcript itself is unchanged.
 let followLatest = true;
@@ -37,7 +38,7 @@ window.visualViewport?.addEventListener('resize', fitReaderViewport);
 window.visualViewport?.addEventListener('scroll', fitReaderViewport);
 window.addEventListener('resize', fitReaderViewport);
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && readerExpanded && !$('modelDialog').open && !$('createDialog').open && !$('closePaneDialog').open) { event.preventDefault(); expandReader(false, true); }
+  if (event.key === 'Escape' && readerExpanded && !$('modelDialog').open && !$('contextDialog').open && !$('createDialog').open && !$('closePaneDialog').open) { event.preventDefault(); expandReader(false, true); }
 });
 const pending = new Map(), drafts = new Map();
 function saved(key, fallback = '') { try { return sessionStorage.getItem(key) || fallback; } catch { return fallback; } }
@@ -128,11 +129,13 @@ function updateControls() {
   const connected = ws?.readyState === WebSocket.OPEN;
   const ready = connected && (mode === 'terminal' || !!paneId);
   $('readerExpand').disabled = !connected || mode !== 'mobile' || !paneId;
-  $('sendPrompt').disabled = !ready || sending;
+  $('sendPrompt').disabled = !ready || sending || contextRunning;
   document.querySelectorAll('[data-key]').forEach(button => button.disabled = !ready || sending);
   $('mobileMode').disabled = sending; $('terminalMode').disabled = sending || devices.find(d => d.id === $('clients').value)?.terminal === false;
   $('closePane').disabled = !ready || sending || creating || closing || mode !== 'mobile' || !panes.find(p => p.id === paneId)?.terminalId || (devices.find(d => d.id === $('clients').value)?.mobileVersion || 0) < 3;
   $('modelButton').disabled = !ready || sending || mode !== 'mobile' || !['devin', 'codex', 'claude'].includes(panes.find(p => p.id === paneId)?.agent);
+  const agentPane = panes.find(p => p.id === paneId), v4 = (devices.find(d => d.id === $('clients').value)?.mobileVersion || 0) >= 4;
+  $('clearContext').disabled = $('migrateContext').disabled = !ready || sending || contextRunning || mode !== 'mobile' || !v4 || !Object.hasOwn(clearCommands, agentPane?.agent || '');
   $('launchAgent').disabled = !ready || sending || creating || mode !== 'mobile' || (devices.find(d => d.id === $('clients').value)?.mobileVersion || 0) < 2;
   $('newWindow').disabled = !ready || creating || (devices.find(d => d.id === $('clients').value)?.mobileVersion || 0) < 2;
   $('targetLabel').textContent = mode === 'terminal' ? '傳送到完整終端目前的 pane' : paneId ? `傳送到 ${panes.find(p => p.id === paneId)?.title || paneId} · ${paneId}` : '先選擇一個 pane';
@@ -203,7 +206,10 @@ function renderPanes() {
     const seconds = pane.lastOutputAt ? Math.max(0, Math.floor((Date.now() - pane.lastOutputAt) / 1000)) : null;
     age.textContent = seconds === null ? (pane.completionSeq ? '連線前完成' : '尚未觀測新輸出') : seconds < 10 ? '剛有輸出' : seconds < 60 ? `${seconds} 秒前有輸出` : `${Math.floor(seconds / 60)} 分鐘前有輸出`;
     age.title = pane.lastOutputAt ? new Date(pane.lastOutputAt).toLocaleString() : '尚未觀測到新輸出；歷史項目以 herdr 完成順序排列';
-    button.append(title, detail, checkout, state, age); button.disabled = sending || creating || closing; button.onclick = () => selectPane(pane.id); return button;
+    const usage = contextUsage[pane.id], context = document.createElement('small');
+    context.className = 'pane-context'; context.textContent = usage ? contextText(usage) : ''; context.hidden = !usage;
+    context.classList.toggle('high', (usage?.percent ?? 0) >= 80);
+    button.append(title, detail, checkout, state, age, context); button.disabled = sending || creating || closing; button.onclick = () => selectPane(pane.id); return button;
   }));
   if (!visible.length) { const note = document.createElement('p'); note.className = 'no-matches'; note.textContent = panes.length ? '沒有符合的 pane' : '尚無 pane'; $('paneList').append(note); }
   $('paneList').scrollLeft = scroll;
@@ -217,6 +223,7 @@ function selectPane(id) {
   const pane = panes.find(p => p.id === id);
   $('paneTitle').textContent = pane?.title || id;
   $('paneMeta').textContent = [pane?.workspaceKind === 'worktree' ? 'Worktree' : 'Workspace', pane?.workspace, pane?.branch, pane?.cwd].filter(Boolean).join(' · ');
+  renderContextLine();
   rawOutput = ''; $('paneOutput').textContent = '正在讀取內容…'; $('updated').textContent = '讀取中';
   conversation = null; conversationError = ''; conversationSignature = ''; renderOutput();
   renderPanes(); updateControls(); readPane();
@@ -309,7 +316,7 @@ function connect() {
   ws = socket; setMode(mode); $('empty').hidden = true; $('controls').hidden = false;
   $('connectionStatus').textContent = '正在連接…'; $('connect').disabled = true; $('disconnect').disabled = false; $('clients').disabled = true;
   if (mode === 'terminal') { if (!opened) { term.open($('terminal')); opened = true; } term.reset(); lastDimensions = ''; resize(); }
-  socket.onopen = () => { remember('herdr-connected', 'yes'); $('devicePanel').open = false; $('statusDot').classList.add('online'); $('connectionStatus').textContent = [device?.label, device?.target].filter(Boolean).join(' · '); $('connectionStatus').title = $('connectionStatus').textContent; updateControls(); if (mode === 'mobile') refreshPanes(); else resize(); };
+  socket.onopen = () => { remember('herdr-connected', 'yes'); $('devicePanel').open = false; $('statusDot').classList.add('online'); $('connectionStatus').textContent = [device?.label, device?.target].filter(Boolean).join(' · '); $('connectionStatus').title = $('connectionStatus').textContent; updateControls(); if (mode === 'mobile') refreshPanes().then(refreshContext); else resize(); };
   socket.onmessage = event => {
     if (ws !== socket) return;
     const msg = JSON.parse(event.data);
@@ -321,7 +328,7 @@ function connect() {
     if (ws !== socket) return;
     expandReader(false);
     clearInput();
-    ws = null; selectionEpoch++; $('disconnect').disabled = true; $('connect').disabled = false; $('clients').disabled = false; $('statusDot').classList.remove('online');
+    ws = null; selectionEpoch++; contextUsage = {}; renderContextLine(); $('disconnect').disabled = true; $('connect').disabled = false; $('clients').disabled = false; $('statusDot').classList.remove('online');
     for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(new Error('連線中斷；若剛傳送 prompt，請先確認輸出再重試')); } pending.clear();
     lastDisconnect = `已中斷${socket.lastNotice || event.reason ? '：' + (socket.lastNotice || event.reason) : '，點此重新連線'}`;
     $('connectionStatus').textContent = lastDisconnect; $('devicePanel').open = true; updateControls();
@@ -420,6 +427,12 @@ document.querySelectorAll('[data-key]').forEach(button => button.onclick = async
   else if (paneId && key) { try { await rpc('key', { paneId, key }); readPane(); } catch (error) { $('sendStatus').textContent = error.message; } }
 });
 $('keyboard').onclick = () => term.focus();
+$('prompt').addEventListener('keydown', event => {
+  // Enter keeps inserting newlines; Shift+Enter submits without adding one.
+  if (event.key === 'Enter' && event.shiftKey && !event.isComposing && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    event.preventDefault(); $('promptForm').requestSubmit();
+  }
+});
 $('promptForm').onsubmit = async event => {
   event.preventDefault(); if (ws?.readyState !== WebSocket.OPEN || !$('prompt').value.trim() || sending) return;
   const text = $('prompt').value, target = paneId;
@@ -526,4 +539,95 @@ setInterval(async () => {
   catch (error) { $('modelStatus').textContent = error.message; }
   finally { modelPolling = false; renderModelMenu(); }
 }, 1000);
-setMode(mode); refresh(); setInterval(refresh, 5000); setInterval(readPane, 1500); setInterval(refreshPanes, 5000);
+function contextText(usage) {
+  const k = n => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+  if (usage.used != null && usage.window) return `Context ${k(usage.used)} / ${k(usage.window)} · ${Math.round(usage.percent)}%`;
+  if (usage.used != null) return `Context ${k(usage.used)} tokens`;
+  if (usage.percent != null) return `Context 已用 ${Math.round(usage.percent)}%${usage.basis === 'auto-compact' ? '（距 auto-compact）' : ''}`;
+  return 'Context 未知';
+}
+function renderContextLine() {
+  const usage = contextUsage[paneId], line = $('paneContext');
+  line.hidden = !usage; line.textContent = usage ? contextText(usage) + (usage.source === 'screen' ? ' · 來自畫面' : usage.source === 'transcript' ? ' · 來自紀錄' : '') : '';
+  line.classList.toggle('high', (usage?.percent ?? 0) >= 80);
+}
+async function refreshContext() {
+  if (contextBusy || mode !== 'mobile' || ws?.readyState !== WebSocket.OPEN || document.hidden) return;
+  if ((devices.find(d => d.id === $('clients').value)?.mobileVersion || 0) < 4) return;
+  contextBusy = true; const activeSocket = ws;
+  try {
+    const result = await rpc('context');
+    if (ws !== activeSocket) return;
+    contextUsage = result.usage || {}; renderPanes(); renderContextLine();
+  } catch {} finally { contextBusy = false; }
+}
+const clearCommands = { claude: '/clear', devin: '/clear', codex: '/new' };
+const HANDOVER_PATH = '.herdr/handover.md';
+const handoverPrompt = `Write a handover document for a fresh session to ${HANDOVER_PATH} (relative to your current working directory; create the directory if needed and overwrite any existing file). Include: the overall goal, current state, key decisions and why, files changed, commands/tests run and their results, open problems, user preferences or constraints, and exact next steps. Use absolute file paths. Do not include secrets or credentials. Do not start any other work. When the file is written, reply only: handover written.`;
+const resumePrompt = `Read ${HANDOVER_PATH} in your current working directory. It is a handover from your previous context. Summarize your understanding in three short bullets, then continue with the next steps it lists.`;
+async function paneStatus(target) {
+  const result = await rpc('panes');
+  return result.panes?.find(p => p.id === target.paneId);
+}
+function contextGuard(target) {
+  if (target.socket !== ws || ws?.readyState !== WebSocket.OPEN) throw new Error('連線已變更，已停止');
+}
+async function waitForIdle(target, report) {
+  let started = false; const begin = Date.now();
+  while (Date.now() - begin < 10 * 60000) {
+    await pause(2000); contextGuard(target);
+    const pane = await paneStatus(target);
+    if (!pane || pane.agent !== target.agent) throw new Error('Pane 或 agent 已改變，已停止');
+    if (pane.status === 'blocked') throw new Error('Agent 正在等待回覆（可能需要授權），已停止；請查看原始畫面');
+    if (pane.status === 'working') { started = true; report(`Agent 正在寫交接檔…（${Math.round((Date.now() - begin) / 1000)} 秒）`); continue; }
+    if (started) return;
+    if (Date.now() - begin > 30000) throw new Error('未觀測到 agent 開始工作，已停止；請查看原始畫面');
+  }
+  throw new Error('等待超過 10 分鐘，已停止；交接檔可能尚未完成');
+}
+function openContextDialog(action) {
+  const pane = panes.find(p => p.id === paneId); if (!pane || !Object.hasOwn(clearCommands, pane.agent)) return;
+  contextAction = { action, paneId: pane.id, agent: pane.agent, socket: ws };
+  const command = clearCommands[pane.agent];
+  $('contextTitle').textContent = action === 'clear' ? 'Clear context' : 'Migration context';
+  $('contextTarget').textContent = `${pane.title} · ${pane.id} · ${pane.agent}`;
+  $('contextExplain').textContent = action === 'clear'
+    ? `送出 ${command}，清空目前 context。對話內容無法從網頁復原。`
+    : `1. 請 agent 寫入 ${HANDOVER_PATH}　2. 完成後送出 ${command}　3. 請新 context 讀回交接檔並接續。任一步失敗即停止。`;
+  $('contextStatus').textContent = ''; $('confirmContext').disabled = false; $('cancelContext').disabled = false;
+  $('contextDialog').showModal();
+}
+$('clearContext').onclick = () => openContextDialog('clear');
+$('migrateContext').onclick = () => openContextDialog('migrate');
+$('cancelContext').onclick = () => { if (!contextRunning) { contextAction = null; $('contextDialog').close(); } };
+$('contextDialog').oncancel = event => { if (contextRunning) event.preventDefault(); else contextAction = null; };
+$('contextForm').onsubmit = async event => {
+  event.preventDefault(); const target = contextAction;
+  if (contextRunning || !target) return;
+  const report = text => { $('contextStatus').textContent = text; $('sendStatus').textContent = text; };
+  contextRunning = true; $('confirmContext').disabled = true; $('cancelContext').disabled = true; updateControls();
+  try {
+    contextGuard(target);
+    const pane = await paneStatus(target);
+    if (!pane || pane.agent !== target.agent) throw new Error('Pane 或 agent 已改變，請重新開啟');
+    if (['working', 'blocked'].includes(pane.status)) throw new Error('Agent 正在工作或等待回覆，請等它待命後再試');
+    const command = clearCommands[target.agent];
+    if (target.action === 'migrate') {
+      report('請 agent 寫入交接檔…');
+      await rpc('prompt', { paneId: target.paneId, text: handoverPrompt });
+      await waitForIdle(target, report);
+    }
+    contextGuard(target); report(`送出 ${command}…`);
+    await rpc('prompt', { paneId: target.paneId, text: command });
+    if (target.action === 'migrate') {
+      await pause(3000); contextGuard(target); report('請新 context 讀回交接檔…');
+      await rpc('prompt', { paneId: target.paneId, text: resumePrompt });
+    }
+    delete contextUsage[target.paneId]; renderContextLine(); renderPanes();
+    contextAction = null; $('contextDialog').close();
+    report(target.action === 'migrate' ? `Migration 完成；交接檔保留在 ${HANDOVER_PATH}` : `已送出 ${command}`);
+    readPane();
+  } catch (error) { report(`${error.message}。不會自動重試。`); }
+  finally { contextRunning = false; $('cancelContext').disabled = false; updateControls(); }
+};
+setMode(mode); refresh(); setInterval(refresh, 5000); setInterval(refreshContext, 30000); setInterval(readPane, 1500); setInterval(refreshPanes, 5000);

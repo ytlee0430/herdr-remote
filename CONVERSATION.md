@@ -32,7 +32,8 @@ session ID 與實際 JSONL 檔案。不要用最近修改時間猜 session。
 }
 ```
 
-Claude 的 `agent` 填 `claude`。每個 pane 都需明確映射。設定檔只能由 VDI
+Claude 的 `agent` 填 `claude`。可選 `contextWindow`（tokens）指定 context 上限，
+供 Context 用量顯示使用；未指定時 Claude 預設 200k、Codex 讀 log 內的值。每個 pane 都需明確映射。設定檔只能由 VDI
 端提供，瀏覽器不能傳入檔案路徑。不要把真實對話或映射提交 Git。
 
 只停止 Python bridge，不停止 herdr 或 agent，然後更新並重開：

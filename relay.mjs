@@ -98,7 +98,7 @@ const server = http.createServer(async (req, res) => {
         old?.viewer?.close(1012, 'Client reconnecting');
         if (clients.size >= 32 && !old) return json(res, 429, { error: 'Client limit reached' });
         const c = { id: data.id, label: String(data.label || data.id).slice(0, 80), target: String(data.target || 'session: default').slice(0, 120), terminal: data.terminal !== false, mobile: Array.isArray(data.capabilities) && data.capabilities.includes('mobile-v1'), generation: randomBytes(16).toString('hex'), seen: Date.now(), commands: [], seq: 0, outputSeq: 0, viewer: null, attachId: null };
-        c.mobileVersion = data.capabilities?.includes('mobile-v3') ? 3 : data.capabilities?.includes('mobile-v2') ? 2 : c.mobile ? 1 : 0;
+        c.mobileVersion = data.capabilities?.includes('mobile-v4') ? 4 : data.capabilities?.includes('mobile-v3') ? 3 : data.capabilities?.includes('mobile-v2') ? 2 : c.mobile ? 1 : 0;
         clients.set(c.id, c); return json(res, 200, { generation: c.generation });
       }
       const c = clients.get(url.searchParams.get('id'));
@@ -176,8 +176,9 @@ server.on('upgrade', (req, socket, head) => {
         const msg = JSON.parse(raw);
         if (mobile && msg.type === 'mobile') {
           const params = msg.params || {};
-          if (typeof msg.requestId !== 'string' || msg.requestId.length > 64 || !['panes', 'read', 'prompt', 'key', 'create', 'close'].includes(msg.operation)) throw new Error('Invalid mobile request');
-          if (msg.operation !== 'panes' && (typeof params.paneId !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(params.paneId))) throw new Error('Invalid pane');
+          if (typeof msg.requestId !== 'string' || msg.requestId.length > 64 || !['panes', 'read', 'prompt', 'key', 'create', 'close', 'context'].includes(msg.operation)) throw new Error('Invalid mobile request');
+          if (msg.operation === 'context' && c.mobileVersion < 4) throw new Error('Client does not support context usage');
+          if (!['panes', 'context'].includes(msg.operation) && (typeof params.paneId !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(params.paneId))) throw new Error('Invalid pane');
           if (msg.operation === 'prompt' && (typeof params.text !== 'string' || !params.text.trim() || params.text.length > 12000)) throw new Error('Invalid prompt');
           if (msg.operation === 'create' && (c.mobileVersion < 2 || typeof params.label !== 'string' || !params.label.trim() || params.label.length > 80 || /[\x00-\x1f]/.test(params.label))) throw new Error('Invalid new window');
           if (msg.operation === 'create' && params.workspaceId !== undefined && (typeof params.workspaceId !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(params.workspaceId))) throw new Error('Invalid workspace');

@@ -19,6 +19,9 @@ Relay 不需要 SSH 進入 agent 主機。此專案可供個人或可信任團�
 - Pane 搜尋、最近輸出／等待回覆／名稱排序，Workspace／Git Worktree 篩選。
 - 對話模式（預設）、智慧重排、保留分行、原始行寬；滿版閱讀與 8–24px 字體。
 - 對指定 pane 傳送 prompt、Enter、Esc、Tab、方向鍵及 Ctrl+C。
+  輸入框 Enter 換行，Shift+Enter 直接送出。
+- **Context 用量**：每 30 秒更新各 agent pane 的 context 用量（見下方說明）。
+- **Clear／Migration**：確認後清空 agent context，或先寫交接檔再清空並讀回。
 - **Model**：開啟 agent 的原生 `/model` 選單，從網頁選擇模型與 effort。
   也可在網站直接輸入 `/model`。會檢查原生輸入區，避免把既有草稿一起送出。
 - **＋新視窗／啟動 Agent**：選來源 workspace／worktree 與 pane，沿用工作目錄。
@@ -178,6 +181,31 @@ Model 使用即時終端選單，不內建模型清單。點選項目後按「�
 方向鍵可切換更多選項與 effort；Codex 第二層選單會留在相同視窗。
 CLI 介面格式改版可能需要更新 parser。遇到不熟悉的格式，請改用原始終端。
 
+### Context 用量、Clear 與 Migration
+
+Context 用量每 30 秒由 bridge 讀取一次（需 `mobile-v4` client），顯示在
+pane 卡片與標題下方：
+
+- 有對話映射時讀 JSONL 最後一筆用量。Codex 用 `token_count` 的
+  `last_token_usage` 與 `model_context_window`；Claude 用最後一則 assistant
+  訊息的 `input + cache_creation + cache_read` tokens。Claude 視窗預設 200k，
+  超過即視為 1M；可在映射加 `"contextWindow": 1000000` 指定。
+- 無映射時只解析畫面上 agent 自己顯示的百分比（Codex `NN% context left`、
+  Claude `Context left until auto-compact: NN%`），找不到就顯示「未知」，不猜測。
+- 映射不跟隨 `/clear`；清空後舊映射的用量會過時，需重新設定映射。
+
+**Clear** 只在 agent 待命且原生輸入區為空時送出：Claude／Devin 送 `/clear`，
+Codex 送 `/new`。**Migration** 依序執行：
+
+1. 請 agent 把交接內容寫入其工作目錄的 `.herdr/handover.md`（覆寫）。
+2. 等 pane 狀態從 working 回到待命（最多 10 分鐘；出現 blocked 即中止）。
+3. 送出 Clear 命令，再請新 context 讀取 `.herdr/handover.md` 接續工作。
+
+任何一步失敗都會停下並顯示原因，不自動重試；交接檔不會被刪除。
+`.herdr/` 建議加入目標專案的 `.gitignore`。只是想延續同一任務時，
+agent 內建的 `/compact` 通常已足夠；Migration 適合想自行掌控保留內容、
+或需要可檢視的交接檔時使用。
+
 ### 更新與重啟
 
 1. 停止 Python bridge，保留 herdr 與 agent。
@@ -188,7 +216,7 @@ CLI 介面格式改版可能需要更新 parser。遇到不熟悉的格式，請
 需要新 relay 功能時也須重啟 `npm start`。登入狀態只存在 relay 記憶體中，
 relay 重啟後需重新登入。沒有安裝開機自啟服務。
 可用 `--token-file /private/path/client.token` 避免互動輸入，並將該檔案權限設為 `0600`。
-新版關閉 pane 功能要求 `mobile-v3` client。
+新版關閉 pane 功能要求 `mobile-v3` client；Context 用量、Clear 與 Migration 要求 `mobile-v4`。
 
 ## 限制與排查
 

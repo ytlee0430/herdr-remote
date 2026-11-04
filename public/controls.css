@@ -70,3 +70,7 @@ dialog input { display: block; width: 100%; margin-top: 8px; padding: 12px; font
 #controls .danger, .dialog-actions .danger { color: #ffc0b5; border-color: #9b5448; background: #38231f; }
 .pane-checkout { color: #b8c6bc; }
 @media (min-width: 800px) { #paneList { padding-top: 215px; } }
+.pane-context { color: #b9c9a0; margin-top: 4px; }
+.pane-context.high, .pane-context-line.high { color: #e9b48b; }
+.output-heading p.pane-context-line { color: #b9c9a0; }
+#contextStatus { color: #e4bd91; overflow-wrap: anywhere; }

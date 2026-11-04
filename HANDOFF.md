@@ -13,6 +13,8 @@
 - 可依 workspace／worktree 篩選；建立 pane 可指定來源 workspace 與 pane。
 - 啟動 Devin、Codex、Claude；精確命令列於 README。
 - 關閉 pane 有確認視窗及 terminal ID 核對；不刪除 worktree 檔案。
+- Shift+Enter 送出 prompt；每 30 秒顯示 agent context 用量。
+- Clear（/clear 或 Codex /new）與 Migration（寫 `.herdr/handover.md`→clear→讀回）皆需確認。
 
 ## 對話來源與限制
 
@@ -26,7 +28,7 @@ CLI 原生選單與資料格式升級後可能需要調整 parser。
 ## 工程注意事項
 
 - `server.mjs` 與舊桌面入口是歷史實驗；目前入口是 relay 與 mobile UI。
-- Bridge 功能版本為 `mobile-v3`；更新 Python bridge 不需重啟 agent。
+- Bridge 功能版本為 `mobile-v4`；更新 Python bridge 不需重啟 agent。
 - 建立 pane 使用指定 workspace 的 tab/root pane，不強制切換原生焦點。
 - Workspace metadata 有短期快取；worktree 以 herdr 回傳資料判斷。
 - 保護原生輸入草稿，避免呼叫 `/model` 時一起送出。
