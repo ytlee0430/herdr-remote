@@ -57,3 +57,36 @@ export function modelMenu(text, agent) {
   }
   return { options, selected, text: lines.slice(start).join('\n'), active: options.length > 0 && selected >= 0 };
 }
+
+// Parse the live question an agent is waiting on: the last consecutively
+// numbered option list (1., 2., …) with a selection cursor. Callers only use
+// this for panes herdr reports as blocked, never for transcript history.
+export function agentPrompt(text) {
+  const clean = line => line.replace(/^[\s│┃║]+|[\s│┃║]+$/g, '');
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n').map(clean);
+  let groups = [], group = null, gap = 0;
+  lines.forEach((line, index) => {
+    const option = line.match(/^([›❯❭>▶]?)\s*(\d{1,2})[.)]\s+(.+)$/u);
+    if (option && Number(option[2]) === 1) { group = { start: index, end: index, options: [] }; groups.push(group); gap = 0; }
+    if (option && group && Number(option[2]) === group.options.length + 1) {
+      group.options.push({ label: option[3].trim(), selected: !!option[1], detail: [] }); group.end = index; gap = 0; return;
+    }
+    if (!group) return;
+    if (++gap > 4) { group = null; return; }
+    // Descriptions sit between options; separators and blanks do not end a list.
+    if (line && !/^[─━═▔-]{3,}$/.test(line) && gap <= 2 && group.options.length) group.options.at(-1).detail.push(line);
+  });
+  const found = groups.filter(g => g.options.length >= 2 && g.options.filter(o => o.selected).length === 1).at(-1);
+  if (!found) return { active: false, question: '', options: [], selected: -1 };
+  const question = [];
+  for (let i = found.start - 1; i >= 0 && question.length < 8 && found.start - i <= 14; i--) {
+    const line = lines[i];
+    if (/^[╭╰┌└─━═▔]+/.test(line) || /^[›❯❭>▶]?\s*\d{1,2}[.)]\s/u.test(line)) break;
+    if (line && !/^[─━═▔-]{3,}$/.test(line)) question.unshift(line);
+  }
+  const options = found.options.map((option, index) => ({
+    index, label: option.label, id: option.label.replace(/\s+/g, ' ').trim(),
+    detail: option.detail.filter(line => !/^\d{1,2}[.)]\s/.test(line)).join('\n'),
+  }));
+  return { active: true, question: question.join('\n'), options, selected: found.options.findIndex(o => o.selected) };
+}

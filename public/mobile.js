@@ -1,4 +1,4 @@
-import { paneDisplayText, sortPanes, modelMenu } from './text-layout.js';
+import { paneDisplayText, sortPanes, modelMenu, agentPrompt } from './text-layout.js';
 const $ = id => document.getElementById(id);
 const term = new Terminal({ cursorBlink: true, fontSize: 12, scrollback: 5000, theme: { background: '#101513', foreground: '#e4e9e4' }, allowProposedApi: false });
 const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
@@ -8,6 +8,7 @@ let rawOutput = '', creating = false, closing = false, workspaceRows = [], close
 let conversation = null, conversationError = '', conversationSignature = '';
 let inputBuffer = '', inputSocket = null, inputTimer = null, lastDisconnect = '';
 let readerExpanded = false;
+let promptState = null, promptBusy = false, promptPolling = false;
 let contextUsage = {}, contextBusy = false, contextRunning = false, contextAction = null;
 let approvalEnabled = false, waitingApproval = false, approvalBusy = false, deviceAuthBusy = false;
 // Preserve following the latest reply when the viewport, keyboard or composer
@@ -200,7 +201,7 @@ function renderPanes() {
   const filter = $('workspaceFilter').value;
   const visible = sortPanes(panes, $('paneSort').value).filter(p => (!filter || (filter.startsWith('kind:') ? (p.workspaceKind || 'workspace') === filter.slice(5) : p.workspaceId === filter)) && [p.title, p.id, p.workspace, p.cwd, p.branch, p.worktreePath].join(' ').toLowerCase().includes(query));
   $('paneList').replaceChildren(...visible.map(pane => {
-    const button = document.createElement('button'); button.className = 'pane-card'; button.classList.toggle('selected', pane.id === paneId); button.setAttribute('aria-pressed', String(pane.id === paneId));
+    const button = document.createElement('button'); button.className = 'pane-card'; button.classList.toggle('needs-reply', pane.status === 'blocked'); button.classList.toggle('selected', pane.id === paneId); button.setAttribute('aria-pressed', String(pane.id === paneId));
     const title = document.createElement('strong'); title.textContent = pane.title;
     const detail = document.createElement('small'); detail.textContent = `${pane.workspaceKind === 'worktree' ? 'Worktree' : 'Workspace'} · ${pane.workspace || pane.workspaceId || ''} · ${pane.id}`;
     const checkout = document.createElement('small'); checkout.className = 'pane-checkout'; checkout.textContent = [pane.branch, pane.worktreePath || pane.cwd].filter(Boolean).join(' · '); checkout.title = checkout.textContent;
@@ -214,6 +215,9 @@ function renderPanes() {
     context.classList.toggle('high', (usage?.percent ?? 0) >= 80);
     button.append(title, detail, checkout, state, age, context); button.disabled = sending || creating || closing; button.onclick = () => selectPane(pane.id); return button;
   }));
+  const blocked = panes.filter(p => p.status === 'blocked').length;
+  $('blockedCount').hidden = !blocked; $('blockedCount').textContent = `${blocked} 個等待回覆`;
+  document.title = blocked ? `(${blocked}) Herdr Remote` : 'Herdr Remote';
   if (!visible.length) { const note = document.createElement('p'); note.className = 'no-matches'; note.textContent = panes.length ? '沒有符合的 pane' : '尚無 pane'; $('paneList').append(note); }
   $('paneList').scrollLeft = scroll;
 }
@@ -287,7 +291,7 @@ function renderOutput() {
     const note = document.createElement('p'); note.className = 'conversation-notice';
     note.textContent = conversationError || (conversation ? `對話紀錄 · ${conversation.agent} · ${conversation.sessionId}。不代表目前 pane 的即時授權狀態。${conversation.truncated ? '僅顯示最近部分紀錄。' : ''}` : '正在讀取對話紀錄…'); host.append(note);
     if (status === 'working' || status === 'blocked') {
-      const state = document.createElement('p'); state.textContent = status === 'working' ? 'Working…' : 'Pane 等待回覆；請切回「保留分行」查看即時內容與授權。'; host.append(state);
+      const state = document.createElement('p'); state.textContent = status === 'working' ? 'Working…' : 'Pane 等待回覆；請在下方「Agent 等待回覆」作答，或切回「保留分行」查看即時畫面。'; host.append(state);
     }
     const labels = { user: '你', assistant: 'Agent 回覆', thinking: '思考摘要', progress: '過程訊息', tool: '工具紀錄（歷史）' };
     for (const entry of conversation?.entries || []) {
@@ -723,4 +727,77 @@ $('cancelApproval').onclick = async () => {
 api('/api/auth/config').then(async config => { configureApproval(config.deviceApproval === true); if (approvalEnabled) { await pollApproval(true); await refreshAuthorizations(); } }).catch(error => { $('loginError').textContent = error.message; });
 setInterval(() => { if (!document.hidden) pollApproval(); }, 2000);
 setInterval(() => { if (!document.hidden) refreshAuthorizations(); }, 5000);
-setMode(mode); refresh(); setInterval(refresh, 5000); setInterval(refreshContext, 30000); setInterval(readPane, 1500); setInterval(refreshPanes, 5000);
+function promptConnected(state) {
+  return state && state === promptState && state.socket === ws && ws?.readyState === WebSocket.OPEN && state.paneId === paneId;
+}
+function renderAgentPrompt() {
+  const state = promptState, menu = state?.menu;
+  $('agentPrompt').hidden = !state;
+  if (!state) return;
+  $('agentQuestion').textContent = menu?.active ? menu.question || '(沒有辨識到問題文字，請看即時畫面)' : '未辨識到可選的項目；請查看即時畫面，或切到「保留分行」／完整終端。';
+  $('agentQuestion').hidden = false;
+  $('agentScreen').textContent = state.text.split('\n').slice(-60).join('\n');
+  if (!menu?.active) $('agentScreenDetails').open = true;
+  const disabled = promptBusy || !menu?.active || !promptConnected(state);
+  $('agentOptions').replaceChildren(...(menu?.options || []).map(option => {
+    const button = document.createElement('button'); button.type = 'button';
+    button.setAttribute('aria-pressed', String(option.index === menu.selected));
+    const label = document.createElement('span'); label.textContent = `${option.index + 1}. ${option.label}`; button.append(label);
+    if (option.detail) { const detail = document.createElement('small'); detail.textContent = option.detail; button.append(detail); }
+    button.disabled = disabled; button.onclick = () => choosePromptOption(option.id);
+    return button;
+  }));
+  $('agentSubmit').disabled = disabled; $('agentCancel').disabled = promptBusy || !promptConnected(state);
+}
+async function readAgentPrompt(state) {
+  if (!promptConnected(state)) throw new Error('連線或 pane 已改變，已停止');
+  const result = await rpc('read', { paneId: state.paneId, view: 'menu' });
+  if (!promptConnected(state)) return;
+  if (result.view !== 'menu') throw new Error('請更新此裝置的 bridge，才能讀取即時畫面');
+  state.text = result.text || ''; state.menu = agentPrompt(state.text);
+  renderAgentPrompt();
+}
+async function pollAgentPrompt() {
+  const pane = panes.find(p => p.id === paneId);
+  const waiting = mode === 'mobile' && ws?.readyState === WebSocket.OPEN && pane?.status === 'blocked' && !modelSession && !document.hidden;
+  if (!waiting) { if (promptState && !promptBusy) { promptState = null; renderAgentPrompt(); } return; }
+  if (promptBusy || promptPolling) return;
+  if (!promptState || promptState.paneId !== paneId || promptState.socket !== ws) promptState = { paneId, socket: ws, text: '', menu: null };
+  const state = promptState; promptPolling = true;
+  try { await readAgentPrompt(state); } catch (error) { if (state === promptState) $('agentPromptStatus').textContent = error.message; }
+  finally { promptPolling = false; }
+}
+async function promptAction(action) {
+  const state = promptState;
+  if (promptBusy || !state) return;
+  promptBusy = true; renderAgentPrompt();
+  try { while (promptPolling) await pause(25); await action(state); }
+  catch (error) { $('agentPromptStatus').textContent = error.message; }
+  finally { promptBusy = false; renderAgentPrompt(); }
+}
+function choosePromptOption(id) {
+  return promptAction(async state => {
+    await readAgentPrompt(state);
+    for (let i = 0; i < 30; i++) {
+      const menu = state.menu, target = menu?.options.findIndex(option => option.id === id) ?? -1;
+      if (!menu?.active || target < 0) throw new Error('選項已改變，請重新選取');
+      if (menu.selected === target) { $('agentPromptStatus').textContent = '確認無誤後按「送出選擇」'; return; }
+      await rpc('key', { paneId: state.paneId, key: menu.selected < target ? 'down' : 'up' });
+      await pause(200); await readAgentPrompt(state);
+    }
+    throw new Error('未能定位選項，請改用原始畫面');
+  });
+}
+$('agentSubmit').onclick = () => promptAction(async state => {
+  const expected = state.menu?.options[state.menu.selected]?.id;
+  await readAgentPrompt(state);
+  if (!state.menu?.active || state.menu.options[state.menu.selected]?.id !== expected) throw new Error('畫面已改變，請確認後再送出');
+  await rpc('key', { paneId: state.paneId, key: 'enter' });
+  $('agentPromptStatus').textContent = `已送出：${expected}`; $('sendStatus').textContent = `已回覆 agent：${expected}`;
+  await pause(500); refreshPanes(); readPane();
+});
+$('agentCancel').onclick = () => promptAction(async state => {
+  await rpc('key', { paneId: state.paneId, key: 'esc' });
+  $('agentPromptStatus').textContent = '已送出 Esc'; await pause(500); refreshPanes(); readPane();
+});
+setMode(mode); refresh(); setInterval(refresh, 5000); setInterval(pollAgentPrompt, 1500); setInterval(refreshContext, 30000); setInterval(readPane, 1500); setInterval(refreshPanes, 5000);

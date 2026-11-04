@@ -38,8 +38,15 @@ class ContextUsageTests(unittest.TestCase):
         ])
         usage = module.context_from_transcript({'agent': 'claude', 'path': path, 'sessionId': 's'})
         self.assertEqual((usage['used'], usage['window'], usage['percent']), (50000, 200000, 25.0))
+        path = self.write([assistant({'input_tokens': 50000}, model='claude-opus-5-5')])
+        usage = module.context_from_transcript({'agent': 'claude', 'path': path, 'sessionId': 's'})
+        self.assertEqual((usage['window'], usage['percent']), (1000000, 5.0))
         usage = module.context_from_transcript({'agent': 'claude', 'path': path, 'sessionId': 's', 'contextWindow': 1000000})
         self.assertEqual(usage['window'], 1000000)
+        for model, window in [('claude-opus-5-5', 1000000), ('claude-fable-5-1', 1000000), ('claude-sonnet-4-6', 1000000),
+                              ('claude-haiku-5-5', 1000000), ('claude-haiku-4-5', 200000), ('claude-sonnet-4-5-20250929', 200000),
+                              ('claude-sonnet-4-20250514', 200000), ('claude-opus-4-1', 200000), ('claude-sonnet-4-5[1m]', 1000000)]:
+            self.assertEqual(module.claude_context_window(model, 50000), window, model)
         path = self.write([assistant({'input_tokens': 300000})])
         self.assertEqual(module.context_from_transcript({'agent': 'claude', 'path': path, 'sessionId': 's'})['window'], 1000000)
 

@@ -13,6 +13,7 @@
 - 可依 workspace／worktree 篩選；建立 pane 可指定來源 workspace 與 pane。
 - 啟動 Devin、Codex、Claude；精確命令列於 README。
 - 關閉 pane 有確認視窗及 terminal ID 核對；不刪除 worktree 檔案。
+- 等待回覆的 pane 會在網頁顯示即時問題與選項（游標移動與 Enter 分開確認）。
 - Shift+Enter 送出 prompt；每 30 秒顯示 agent context 用量。
 - Clear（/clear 或 Codex /new）與 Migration（寫 `.herdr/handover.md`→clear→讀回）皆需確認。
 

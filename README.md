@@ -20,6 +20,7 @@ Relay 不需要 SSH 進入 agent 主機。此專案可供個人或可信任團�
 - 對話模式（預設）、智慧重排、保留分行、原始行寬；滿版閱讀與 8–24px 字體。
 - 對指定 pane 傳送 prompt、Enter、Esc、Tab、方向鍵及 Ctrl+C。
   輸入框 Enter 換行，Shift+Enter 直接送出。
+- **Agent 提問**：pane 等待回覆時，在網頁直接顯示 agent 的問題與選項並作答。
 - **Context 用量**：每 30 秒更新各 agent pane 的 context 用量（見下方說明）。
 - **Clear／Migration**：確認後清空 agent context，或先寫交接檔再清空並讀回。
 - **Model**：開啟 agent 的原生 `/model` 選單，從網頁選擇模型與 effort。
@@ -181,6 +182,18 @@ Model 使用即時終端選單，不內建模型清單。點選項目後按「�
 方向鍵可切換更多選項與 effort；Codex 第二層選單會留在相同視窗。
 CLI 介面格式改版可能需要更新 parser。遇到不熟悉的格式，請改用原始終端。
 
+### Agent 提問與授權
+
+Pane 狀態為「等待回覆」時，網頁每 1.5 秒讀一次即時畫面，辨識 agent
+目前顯示的編號選項（Claude／Codex 的授權確認、AskUserQuestion 等），
+在輸入框上方顯示問題、選項與畫面原文。點選項目只會移動游標，
+按「送出選擇」才會送 Enter；「取消（Esc）」送 Esc。每次操作前都會重讀畫面，
+選單已改變就停止。需要文字回覆時，選對應選項後再用下方輸入框傳送。
+
+清單與頁面標題會顯示等待回覆的 pane 數量。只在 herdr 判定為等待回覆時才解析，
+不從對話紀錄或歷史文字猜測；無法辨識選項時只顯示畫面原文，請改用「保留分行」
+或完整終端。不需要更新 bridge。
+
 ### Context 用量、Clear 與 Migration
 
 Context 用量每 30 秒由 bridge 讀取一次（需 `mobile-v4` client），顯示在
@@ -188,8 +201,9 @@ pane 卡片與標題下方：
 
 - 有對話映射時讀 JSONL 最後一筆用量。Codex 用 `token_count` 的
   `last_token_usage` 與 `model_context_window`；Claude 用最後一則 assistant
-  訊息的 `input + cache_creation + cache_read` tokens。Claude 視窗預設 200k，
-  超過即視為 1M；可在映射加 `"contextWindow": 1000000` 指定。
+  訊息的 `input + cache_creation + cache_read` tokens。Claude 上限依紀錄中的模型判斷：
+  Fable／Mythos、5.x 以後、Opus／Sonnet 4.6 以後為 1M；Haiku 4.5 與更舊模型為 200k
+  （用量超過 200k 仍視為 1M）。可在映射加 `"contextWindow": 1000000` 指定。
 - 無映射時只解析畫面上 agent 自己顯示的百分比（Codex `NN% context left`、
   Claude `Context left until auto-compact: NN%`），找不到就顯示「未知」，不猜測。
 - 映射不跟隨 `/clear`；清空後舊映射的用量會過時，需重新設定映射。
